@@ -1,0 +1,16 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.3", features = ["derive"] }
+
+lexer = { path = "../crates/lexer/" }
+parser = { path = "../crates/parser/" }
+vm = { path = "../crates/vm/" }
+
+[[bin]]
+name = "vypr"
+path = "src/main.rs"
+

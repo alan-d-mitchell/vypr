@@ -1,0 +1,49 @@
+use lexer::token::{Token, TokenType};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeExpr {
+    Atomic(TokenType),
+    List(Box<TypeExpr>),
+    Union(Box<TypeExpr>, Box<TypeExpr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub annotation: Option<TypeExpr>
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt<'s> {
+    VarDecl {
+        name: String,
+        value: Option<Expr>,
+        annotation: Option<TypeExpr>
+    },
+
+    FuncDecl {
+        name: String,
+        params: Vec<Param>,
+        return_type: Option<TypeExpr>,
+        body: Vec<Stmt<'s>>
+    },
+
+    Return {
+        keyword: Token<'s>,
+        value: Option<Expr>
+    },
+
+    ExprStmt(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Literal(TokenType),
+    Variable(String),
+    List(Vec<Expr>),
+
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>
+    },
+}
