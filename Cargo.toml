@@ -2,6 +2,7 @@
 members = [
     "crates/lexer",
     "crates/parser",
+    "crates/semantic",
     "crates/vm",
     "cli",
 ]
