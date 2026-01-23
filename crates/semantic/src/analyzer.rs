@@ -62,6 +62,30 @@ impl Analyzer {
                 self.exit_scope();
             }
 
+            Stmt::If { condition, then, else_b } => {
+                // 1. Check condition
+                self.visit_expr(condition)?;
+
+                // 2. Check 'then' block
+                for s in then {
+                    self.visit_stmt(s)?;
+                }
+
+                // 3. Check 'else' block
+                if let Some(branch) = else_b {
+                    for s in branch {
+                        self.visit_stmt(s)?;
+                    }
+                }
+            }
+
+            Stmt::While { condition, body } => {
+                self.visit_expr(condition)?;
+                for s in body {
+                    self.visit_stmt(s)?;
+                }
+            }
+
             Stmt::ExprStmt(expr) => {
                 self.visit_expr(expr)?;
             }

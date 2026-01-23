@@ -2,9 +2,20 @@ use std::fmt;
 
 use crate::bytecode::Chunk;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DataType {
+    Int,
+    Float,
+    Str,
+    Bool,
+    None,
+    Function,
+    Any,
+}
+
 pub type NativeFn = fn(&[Value]) -> Value;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -13,6 +24,31 @@ pub enum Value {
     None,
     Native(NativeFn),
     Function(Box<Chunk>),
+}
+
+impl Value {
+
+    pub fn get_type(&self) -> DataType {
+        match self {
+            Value::Int(_) => DataType::Int,
+            Value::Float(_) => DataType::Float,
+            Value::Bool(_) => DataType::Bool,
+            Value::Str(_) => DataType::Str,
+            Value::None => DataType::None,
+            Value::Native(_) | Value::Function(_) => DataType::Function,
+        }
+    }
+
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            Value::Bool(b) => *b,
+            Value::None => false,
+            Value::Int(i) => *i != 0,
+            Value::Float(f) => *f != 0.0,
+            Value::Str(s) => !s.is_empty(),
+            _ => true,
+        }
+    }
 }
 
 impl fmt::Display for Value {

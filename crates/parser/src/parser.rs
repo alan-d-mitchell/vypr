@@ -36,6 +36,14 @@ impl<'p> Parser<'p> {
             return self.function_declaration();
         }
 
+        if self.check(TokenType::IF) {
+            return self.if_statement();
+        }
+
+        if self.check(TokenType::WHILE) {
+            return self.while_statement();
+        }
+
         if self.match_token(TokenType::RETURN) {
             return self.return_statement();
         }
@@ -81,7 +89,68 @@ impl<'p> Parser<'p> {
 
         Ok(node)
     }
+    
+    fn if_statement(&mut self) -> Result<Stmt<'p>, String> {
+        self.consume(TokenType::IF, "expected 'if'")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::COLON, "expected ':' after if condtion")?;
+        
+        let then = self.block()?;
+        let mut else_b = None;
 
+        if self.check(TokenType::ELIF) {
+            self.advance();
+
+            let elif_stmt = self.if_statement_inner()?;
+            else_b = Some(vec![elif_stmt]);
+        } else if self.match_token(TokenType::ELSE) {
+            self.consume(TokenType::COLON, "expected ':' after else")?;
+            else_b = Some(self.block()?);
+        }
+
+        Ok(Stmt::If {
+            condition,
+            then,
+            else_b
+        })
+    }
+
+    fn if_statement_inner(&mut self) -> Result<Stmt<'p>, String> {
+        let condition = self.expression()?;
+        self.consume(TokenType::COLON, "expected ':'")?;
+        let then = self.block()?;
+    
+        let mut else_b = None;
+
+        if self.check(TokenType::ELIF) {
+            self.advance();
+
+            let elif_stmt = self.if_statement_inner()?;
+            else_b = Some(vec![elif_stmt]);
+        } else if self.match_token(TokenType::ELSE) {
+            self.consume(TokenType::COLON, "expected ':'")?;
+            else_b = Some(self.block()?);
+        }
+
+        Ok(Stmt::If {
+            condition,
+            then,
+            else_b
+        })
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt<'p>, String> {
+        self.consume(TokenType::WHILE, "Expected 'while'")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::COLON, "Expected ':' after while condition")?;
+        
+        let body = self.block()?;
+        
+        Ok(Stmt::While { 
+            condition, 
+            body 
+        })
+    }
 
     fn return_statement(&mut self) -> Result<Stmt<'p>, String> {
         let keyword = self.previous();
@@ -215,9 +284,10 @@ impl<'p> Parser<'p> {
     }
 
     fn block(&mut self) -> Result<Vec<Stmt<'p>>, String> {
-        if !self.match_token(TokenType::INDENT) {
-            return Err("expected indent at start of block".to_string())
+        if self.match_token(TokenType::NEWLINE) {
         }
+
+        self.consume(TokenType::INDENT, "expected indent at start of block")?;
 
         let mut statements = Vec::new();
         while !self.check(TokenType::DEDENT) && !self.is_at_end() {
@@ -235,9 +305,131 @@ impl<'p> Parser<'p> {
         Ok(statements)
     }
 
-    fn expression(&mut self) -> Result<Expr, String> {
+    pub fn expression(&mut self) -> Result<Expr, String> {
+        self.logic_or()
+    }
+
+    fn logic_or(&mut self) -> Result<Expr, String> {
+        let mut expr = self.logic_and()?;
+
+        while self.match_token(TokenType::OR) {
+            let operator = self.previous().kind;
+            let right = self.logic_and()?;
+
+            expr = Expr::Binary { 
+                left: Box::new(expr), 
+                operator, 
+                right: Box::new(right) 
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn logic_and(&mut self) -> Result<Expr, String> {
+        let mut expr = self.equality()?;
+
+        while self.match_token(TokenType::AND) {
+            let operator = self.previous().kind;
+            let right = self.equality()?;
+
+            expr = Expr::Binary { 
+                left: Box::new(expr), 
+                operator, 
+                right: Box::new(right) 
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn equality(&mut self) -> Result<Expr, String> {
+        let mut expr = self.comparison()?;
+
+        while self.match_token(TokenType::DOUBLE_EQUAL) {
+            let operator = self.previous().kind;
+            let right = self.comparison()?;
+
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn comparison(&mut self) -> Result<Expr, String> {
+        let mut expr = self.term()?;
+
+        while self.match_tokens(&[TokenType::LESS_THAN, TokenType::GREATER_THAN, 
+            TokenType::LESS_THAN_EQUAL, TokenType::GREATER_THAN_EQUAL]) 
+        {
+            let operator = self.previous().kind;
+            let right = self.term()?;
+
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right)
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn term(&mut self) -> Result<Expr, String> {
+        let mut expr = self.factor()?;
+
+        while self.match_tokens(&[TokenType::PLUS, TokenType::MINUS]) {
+            let operator = self.previous().kind;
+            let right = self.factor()?;
+
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right)
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn factor(&mut self) -> Result<Expr, String> {
+        let mut expr = self.unary()?;
+
+        while self.match_tokens(&[TokenType::STAR, TokenType::FSLASH]) {
+            let operator = self.previous().kind;
+            let right = self.unary()?;
+
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn unary(&mut self) -> Result<Expr, String> {
+        if self.match_tokens(&[TokenType::MINUS, TokenType::NOT]) {
+            let operator = self.previous().kind;
+            let right = self.unary()?; // Recursive for --5
+
+            return Ok(Expr::Unary {
+                operator,
+                right: Box::new(right),
+            });
+        }
+
+        self.call()
+    }
+
+    fn call(&mut self) -> Result<Expr, String> {
         let mut expr = self.primary()?;
-        
+
         loop {
             if self.match_token(TokenType::LPAREN) {
                 expr = self.finish_call(expr)?;
@@ -247,6 +439,41 @@ impl<'p> Parser<'p> {
         }
 
         Ok(expr)
+    }
+
+    fn primary(&mut self) -> Result<Expr, String> {
+        let token = self.advance();
+
+        match token.kind {
+            TokenType::INT_LITERAL(_) | TokenType::FLOAT_LITERAL(_) |
+            TokenType::STR_LITERAL(_) | TokenType::TRUE | TokenType::FALSE |
+            TokenType::NONE => Ok(Expr::Literal(token.kind)),
+
+            TokenType::IDENTIFIER(name) => Ok(Expr::Variable(name)),
+            
+            TokenType::LPAREN => {
+                let expr = self.expression()?;
+
+                if !self.match_token(TokenType::RPAREN) {
+                    return Err("expected ')' after expression.".to_string());
+                }
+
+                Ok(Expr::Grouping(Box::new(expr)))
+            }
+
+            _ => Err(format!("expected expression, found {:?}", token.lexeme)),
+        }
+    }
+
+    fn match_tokens(&mut self, kinds: &[TokenType]) -> bool {
+        for kind in kinds {
+            if self.check(kind.clone()) {
+                self.advance();
+                return true;
+            }
+        }
+
+        false
     }
 
     fn finish_call(&mut self, callee: Expr) -> Result<Expr, String> {
@@ -262,52 +489,12 @@ impl<'p> Parser<'p> {
             }
         }
 
-        if !self.match_token(TokenType::RPAREN) {
-            return Err("expected ')' after arguments".to_string());
-        }
+        self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
 
         Ok(Expr::Call {
             callee: Box::new(callee),
             args,
         })
-    }
-
-    fn primary(&mut self) -> Result<Expr, String> {
-        let token = self.advance();
-
-        match token.kind {
-            TokenType::INT_LITERAL(_) |
-            TokenType::FLOAT_LITERAL(_) |
-            TokenType::STR_LITERAL(_) |
-            TokenType::TRUE | TokenType::FALSE |
-            TokenType::NONE => {
-                Ok(Expr::Literal(token.kind))
-            }
-
-            TokenType::IDENTIFIER(name) => {
-                Ok(Expr::Variable(name))
-            }
-
-            TokenType::LIST => {
-                Ok(Expr::Variable("list".to_string()))
-            }
-
-            TokenType::LBRACKET => {
-                self.list_literal()
-            }
-
-            TokenType::LPAREN => {
-                let expr = self.expression()?;
-
-                if !self.match_token(TokenType::RPAREN) {
-                    return Err("expected ')' after expression".to_string());
-                }
-
-                Ok(expr)
-            }
-
-            _ => Err(format!("expected expression, found {:?}", token.lexeme))
-        }
     }
 
     fn check_identifier(&self) -> bool {
@@ -319,6 +506,14 @@ impl<'p> Parser<'p> {
         match next_kind {
             TokenType::EQUAL | TokenType::COLON => true,
             _ => false
+        }
+    }
+
+    fn consume(&mut self, kind: TokenType, message: &str) -> Result<Token<'p>, String> {
+        if self.check(kind) {
+            Ok(self.advance())
+        } else {
+            Err(message.to_string())
         }
     }
 

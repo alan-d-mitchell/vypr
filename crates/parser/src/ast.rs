@@ -33,6 +33,17 @@ pub enum Stmt<'s> {
         value: Option<Expr>
     },
 
+    If {
+        condition: Expr,
+        then: Vec<Stmt<'s>>,
+        else_b: Option<Vec<Stmt<'s>>>,
+    },
+
+    While {
+        condition: Expr,
+        body: Vec<Stmt<'s>>,
+    },
+
     ExprStmt(Expr),
 }
 
@@ -41,9 +52,21 @@ pub enum Expr {
     Literal(TokenType),
     Variable(String),
     List(Vec<Expr>),
+    Grouping(Box<Expr>),
 
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>
+    },
+
+    Binary {
+        left: Box<Expr>,
+        operator: TokenType,
+        right: Box<Expr>
+    },
+
+    Unary {
+        operator: TokenType,
+        right: Box<Expr>
     },
 }
