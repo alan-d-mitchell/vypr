@@ -1,8 +1,12 @@
 use std::{env, fs, path::{Path}, process::{self}};
 
 use clap::{ArgAction, CommandFactory, Parser as ClapParser};
+
 use lexer::lexer::Lexer;
 use parser::parser::Parser;
+use semantic::analyzer::Analyzer;
+use vm::compiler::Compiler;
+use vm::vm::VM;
 
 #[derive(ClapParser, Debug)]
 #[command(name = "vypr", version = env!("CARGO_PKG_VERSION"))]
@@ -15,6 +19,9 @@ struct Cli {
 
     #[arg(long, action = ArgAction::SetTrue, help = "emit ast nodes to a .nodes file")]
     ast: bool,
+
+    #[arg(long, action = ArgAction::SetTrue, help = "emit bytecode to a .chunk file")]
+    bytecode: bool,
 
     #[arg(short, long, value_name = "OUTPUT", help = "specify name of output file")]
     output: Option<String>
@@ -96,5 +103,42 @@ fn main() {
         }
 
         println!("[INFO] ast nodes written to: {}", fname);
+    }
+    
+    let mut analyzer = Analyzer::new();
+    match analyzer.analyze(&ast) {
+        Ok(_) => println!("[INFO] Semantic analysis passed"),
+        Err(e) => {
+            eprintln!("[SEMANTIC ERROR] {}", e);
+            process::exit(1);
+        }
+    }
+
+    let compiler = Compiler::new();
+    match compiler.compile(ast) {
+        Ok(chunk) => {
+            if cli.bytecode {
+                let output = format!("{:#?}", chunk);
+                let fname = input_path.with_extension("chunk").to_string_lossy().into_owned();
+
+                if let Err(e) = fs::write(&fname, output) {
+                    eprintln!("[ERROR] failed to write bytecode to file '{}': {}", fname, e);
+                    process::exit(1);
+                }
+
+                println!("[INFO] bytecode chunk written to: {}", fname);
+            }
+
+            let mut vm = VM::new(chunk);
+            if let Err(e) = vm.run() {
+                eprintln!("[RUNTIME ERROR] {:?}", e);
+                process::exit(1);
+            }
+        },
+
+        Err(e) => {
+            eprintln!("[COMPILER ERROR] {}", e);
+            process::exit(1);
+        }
     }
 }
