@@ -113,6 +113,61 @@ impl Compiler {
                 self.patch_jump(else_jump)?;
             }
 
+            Stmt::For { var, iterator, body } => {
+                self.enter_scope();
+
+                self.compile_expr(iterator)?;
+                self.add_local("".to_string());
+                let list_slot = self.locals.len() - 1;
+
+                self.emit_constant(Value::Int(0));
+                self.add_local("".to_string());
+                let index_slot = self.locals.len() - 1;
+
+                let loop_start = self.chunk.code.len();
+
+                self.chunk.write(OpCode::GetLocal(index_slot)); // Index
+                self.chunk.write(OpCode::GetLocal(list_slot)); // List
+                self.chunk.write(OpCode::Length);
+                self.chunk.write(OpCode::Less);
+
+                let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
+                self.chunk.write(OpCode::Pop);
+
+                if self.resolve_local(&var).is_none() {
+                    self.add_local(var.clone());
+                    self.emit_constant(Value::None);
+                }
+
+                let var_idx = self.resolve_local(&var).unwrap();
+
+                self.chunk.write(OpCode::GetLocal(list_slot)); // List
+                self.chunk.write(OpCode::GetLocal(index_slot)); // Index
+                self.chunk.write(OpCode::GetSubscript);
+                self.chunk.write(OpCode::SetLocal(var_idx));
+                self.chunk.write(OpCode::Pop);
+
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+
+                self.chunk.write(OpCode::GetLocal(index_slot));
+                self.emit_constant(Value::Int(1));
+                self.chunk.write(OpCode::Add);
+                self.chunk.write(OpCode::SetLocal(index_slot));
+                self.chunk.write(OpCode::Pop);
+
+                self.emit_loop(loop_start)?;
+
+                self.patch_jump(exit_jump)?;
+                self.chunk.write(OpCode::Pop);
+
+                self.chunk.write(OpCode::Pop); // Pop Index
+                self.chunk.write(OpCode::Pop); // Pop List
+                
+                self.exit_scope();
+            }
+
             Stmt::While { condition, body } => {
                 // 1. Mark the start of the loop (where we jump back to)
                 let loop_start = self.chunk.code.len();
@@ -216,6 +271,9 @@ impl Compiler {
                             TokenType::MINUS => self.chunk.write(OpCode::Sub),
                             TokenType::STAR => self.chunk.write(OpCode::Mul),
                             TokenType::FSLASH => self.chunk.write(OpCode::Div),
+                            TokenType::MODULO => self.chunk.write(OpCode::Modulo),
+                            TokenType::DOUBLE_FSLASH => self.chunk.write(OpCode::FloorDiv),
+                            TokenType::DOUBLE_STAR => self.chunk.write(OpCode::Power),
                             TokenType::DOUBLE_EQUAL => self.chunk.write(OpCode::Equal),
                             TokenType::LESS_THAN => self.chunk.write(OpCode::Less),
                             TokenType::GREATER_THAN => self.chunk.write(OpCode::Greater),
@@ -273,7 +331,19 @@ impl Compiler {
                 self.chunk.write(OpCode::Call(args.len()));
             }
 
-            _ => return Err("unsupported expression".to_string())
+            Expr::Subscript { callee, index } => {
+                self.compile_expr(*callee)?;
+                self.compile_expr(*index)?;
+                self.chunk.write(OpCode::GetSubscript);
+            }
+
+            Expr::List(elements) => {
+                for element in elements.clone() {
+                    self.compile_expr(element)?;
+                }
+                // Emit instruction to build list from the top N items on stack
+                self.chunk.write(OpCode::BuildList(elements.len()));
+            }
         }
 
         Ok(())
@@ -328,5 +398,22 @@ impl Compiler {
         let offset = self.chunk.code.len() - loop_start + 1; // +1 for the Loop instruction itself
         self.chunk.write(OpCode::Loop(offset));
         Ok(())
+    }
+
+    fn enter_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    fn exit_scope(&mut self) {
+        self.scope_depth -= 1;
+        // Pop locals defined in this scope
+        while let Some(local) = self.locals.last() {
+            if local.depth > self.scope_depth {
+                self.chunk.write(OpCode::Pop);
+                self.locals.pop();
+            } else {
+                break;
+            }
+        }
     }
 }

@@ -68,6 +68,7 @@ impl Serializer {
             DataType::Bool     => buf.push(0x04),
             DataType::None     => buf.push(0x05),
             DataType::Function => buf.push(0x06),
+            DataType::List     => buf.push(0x07),
         }
     }
 
@@ -90,6 +91,15 @@ impl Serializer {
                 let len = s.len() as u32;
                 self.file.write_all(&len.to_be_bytes())?;
                 self.file.write_all(s.as_bytes())?;
+            }
+            Value::List(items) => {
+                self.file.write_all(&[0x07])?; // tag
+                let len = items.len() as u32;
+                self.file.write_all(&len.to_be_bytes())?;
+
+                for item in items {
+                    self.write_value(item)?;
+                }
             }
             Value::None => {
                 self.file.write_all(&[0x05])?;
@@ -142,6 +152,9 @@ impl Serializer {
             OpCode::Sub => buf.push(0x09),
             OpCode::Mul => buf.push(0x0A),
             OpCode::Div => buf.push(0x0B),
+            OpCode::Modulo => buf.push(0x18),
+            OpCode::FloorDiv => buf.push(0x19),
+            OpCode::Power => buf.push(0x1A),
             OpCode::Equal => buf.push(0x0C),
             OpCode::Less => buf.push(0x0D),
             OpCode::Greater => buf.push(0x0E),
@@ -154,6 +167,12 @@ impl Serializer {
                 buf.push(*args as u8);
             }
             OpCode::Return => buf.push(0x12),
+            OpCode::GetSubscript => buf.push(0x1B),
+            OpCode::BuildList(count) => {
+                buf.push(0x1C);
+                buf.extend_from_slice(&(*count as u32).to_be_bytes());
+            }
+            OpCode::Length => buf.push(0x1D),
             OpCode::Jump(offset) => {
                 buf.push(0x13);
                 buf.extend_from_slice(&(*offset as u32).to_be_bytes());

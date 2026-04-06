@@ -40,6 +40,10 @@ impl<'p> Parser<'p> {
             return self.if_statement();
         }
 
+        if self.check(TokenType::FOR) {
+            return self.for_statement();
+        }
+
         if self.check(TokenType::WHILE) {
             return self.while_statement();
         }
@@ -139,10 +143,39 @@ impl<'p> Parser<'p> {
         })
     }
 
+    fn for_statement(&mut self) -> Result<Stmt<'p>, String> {
+        self.consume(TokenType::FOR, "expected 'for'")?;
+        let token = self.advance();
+
+        let var_name = match token.kind {
+            TokenType::IDENTIFIER(s) => s,
+
+            TokenType::INT => "int".to_string(),
+            TokenType::FLOAT => "float".to_string(),
+            TokenType::STR => "str".to_string(),
+            TokenType::BOOL => "bool".to_string(),
+            TokenType::LIST => "list".to_string(),
+
+            _ => return Err("expected variable name after 'for'".to_string())
+        };
+
+        self.consume(TokenType::IN, "expected 'in' after variable")?;
+        let iterator = self.expression()?;
+        self.consume(TokenType::COLON, "expected ':' after for loop iterator")?;
+
+        let body = self.block()?;
+
+        Ok(Stmt::For {
+            var: var_name,
+            iterator,
+            body
+        })
+    }
+
     fn while_statement(&mut self) -> Result<Stmt<'p>, String> {
-        self.consume(TokenType::WHILE, "Expected 'while'")?;
+        self.consume(TokenType::WHILE, "expected 'while'")?;
         let condition = self.expression()?;
-        self.consume(TokenType::COLON, "Expected ':' after while condition")?;
+        self.consume(TokenType::COLON, "expected ':' after while condition")?;
         
         let body = self.block()?;
         
@@ -186,6 +219,34 @@ impl<'p> Parser<'p> {
         let mut value = None;
         if self.match_token(TokenType::EQUAL) {
             value = Some(self.expression()?);
+        } else if annotation.is_none() {
+            let operator = if self.match_token(TokenType::PLUS_EQUAL) {
+                Some(TokenType::PLUS)
+            } else if self.match_token(TokenType::MINUS_EQUAL) { 
+                Some(TokenType::MINUS) 
+            } else if self.match_token(TokenType::STAR_EQUAL) { 
+                Some(TokenType::STAR) 
+            } else if self.match_token(TokenType::FSLASH_EQUAL) { 
+                Some(TokenType::FSLASH) 
+            } else if self.match_token(TokenType::DOUBLE_FSLASH_EQUAL) { 
+                Some(TokenType::DOUBLE_FSLASH) 
+            } else if self.match_token(TokenType::MODULO_EQUAL) { 
+                Some(TokenType::MODULO) 
+            } else if self.match_token(TokenType::DOUBLE_STAR_EQUAL) { 
+                Some(TokenType::DOUBLE_STAR) 
+            } else {
+                None
+            };
+
+            if let Some(op) = operator {
+                let right = self.expression()?;
+
+                value = Some(Expr::Binary {
+                    left: Box::new(Expr::Variable(name.clone())),
+                    operator: op,
+                    right: Box::new(right)
+                });
+            }
         }
 
         if self.check(TokenType::SEMICOLON) {
@@ -399,7 +460,12 @@ impl<'p> Parser<'p> {
     fn factor(&mut self) -> Result<Expr, String> {
         let mut expr = self.unary()?;
 
-        while self.match_tokens(&[TokenType::STAR, TokenType::FSLASH]) {
+        while self.match_tokens(&[
+            TokenType::STAR, 
+            TokenType::FSLASH,
+            TokenType::MODULO,
+            TokenType::DOUBLE_FSLASH])
+        {
             let operator = self.previous().kind;
             let right = self.unary()?;
 
@@ -424,7 +490,24 @@ impl<'p> Parser<'p> {
             });
         }
 
-        self.call()
+        self.power()
+    }
+
+    fn power(&mut self) -> Result<Expr, String> {
+        let mut expr = self.call()?;
+
+        if self.match_token(TokenType::DOUBLE_STAR) {
+            let operator = self.previous().kind;
+            let right = self.unary()?;
+
+            expr = Expr::Binary { 
+                left: Box::new(expr), 
+                operator, 
+                right: Box::new(right)
+            };
+        }
+
+        Ok(expr)
     }
 
     fn call(&mut self) -> Result<Expr, String> {
@@ -433,6 +516,8 @@ impl<'p> Parser<'p> {
         loop {
             if self.match_token(TokenType::LPAREN) {
                 expr = self.finish_call(expr)?;
+            } else if self.match_token(TokenType::LBRACKET) {
+                expr = self.finish_subscript(expr)?;
             } else {
                 break;
             }
@@ -450,6 +535,14 @@ impl<'p> Parser<'p> {
             TokenType::NONE => Ok(Expr::Literal(token.kind)),
 
             TokenType::IDENTIFIER(name) => Ok(Expr::Variable(name)),
+
+            TokenType::INT => Ok(Expr::Variable("int".to_string())),
+            TokenType::FLOAT => Ok(Expr::Variable("float".to_string())),
+            TokenType::STR => Ok(Expr::Variable("str".to_string())),
+            TokenType::BOOL => Ok(Expr::Variable("bool".to_string())),
+            TokenType::LIST => Ok(Expr::Variable("list".to_string())),
+
+            TokenType::LBRACKET => self.list_literal(),
             
             TokenType::LPAREN => {
                 let expr = self.expression()?;
@@ -497,6 +590,17 @@ impl<'p> Parser<'p> {
         })
     }
 
+    fn finish_subscript(&mut self, callee: Expr) -> Result<Expr, String> {
+        let index = self.expression()?;
+
+        self.consume(TokenType::RBRACKET, "expected ']' after subscript")?;
+
+        Ok(Expr::Subscript {
+            callee: Box::new(callee),
+            index: Box::new(index),
+        })
+    }
+
     fn check_identifier(&self) -> bool {
         if self.current + 1 >= self.tokens.len() {
             return false;
@@ -504,7 +608,11 @@ impl<'p> Parser<'p> {
 
         let next_kind = &self.tokens[self.current + 1].kind;
         match next_kind {
-            TokenType::EQUAL | TokenType::COLON => true,
+            TokenType::EQUAL | TokenType::COLON |
+            TokenType::PLUS_EQUAL | TokenType::MINUS_EQUAL |
+            TokenType::STAR_EQUAL | TokenType::FSLASH_EQUAL |
+            TokenType::DOUBLE_FSLASH_EQUAL | TokenType::MODULO_EQUAL |
+            TokenType::DOUBLE_STAR_EQUAL => true,
             _ => false
         }
     }

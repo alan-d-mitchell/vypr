@@ -8,6 +8,7 @@ pub enum DataType {
     Float,
     Str,
     Bool,
+    List,
     None,
     Function,
     Any,
@@ -21,6 +22,7 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     Str(String),
+    List(Vec<Value>),
     None,
     Native(NativeFn),
     Function(Box<Chunk>),
@@ -34,6 +36,7 @@ impl Value {
             Value::Float(_) => DataType::Float,
             Value::Bool(_) => DataType::Bool,
             Value::Str(_) => DataType::Str,
+            Value::List(_) => DataType::List,
             Value::None => DataType::None,
             Value::Native(_) | Value::Function(_) => DataType::Function,
         }
@@ -58,6 +61,18 @@ impl fmt::Display for Value {
             Value::Float(v) => write!(f, "{}", v),
             Value::Bool(v) => write!(f, "{}", v),
             Value::Str(v) => write!(f, "{}", v),
+            Value::List(items) => {
+                write!(f, "[")?;
+
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "{}", item)?;
+                    }
+                    write!(f, "]")?;
+                }
+
+                Ok(())
+            }
             Value::None => write!(f, "None"),
             Value::Native(_) => write!(f, "<native fn>"),
             Value::Function(_) => write!(f, "<fn>"),

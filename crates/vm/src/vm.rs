@@ -34,6 +34,26 @@ impl VM {
             lock: DataType::Function,
         });
 
+        globals.insert("int".to_string(), GlobalVar {
+            value: Value::Native(crate::builtins::vypr_int),
+            lock: DataType::Function,
+        });
+
+        globals.insert("float".to_string(), GlobalVar {
+            value: Value::Native(crate::builtins::vypr_float),
+            lock: DataType::Function,
+        });
+
+        globals.insert("str".to_string(), GlobalVar {
+            value: Value::Native(crate::builtins::vypr_str),
+            lock: DataType::Function,
+        });
+
+        globals.insert("len".to_string(), GlobalVar {
+            value: Value::Native(crate::builtins::vypr_len),
+            lock: DataType::Function,
+        });
+
         let main_frame = CallFrame {
             chunk,
             ip: 0,
@@ -130,6 +150,77 @@ impl VM {
                     self.call_value(arg_count)?;
                 }
 
+                OpCode::GetSubscript => {
+                    let index_val = self.pop()?;
+                    let list_val = self.pop()?;
+
+                    let index = match index_val {
+                        Value::Int(i) => i,
+                        _ => return Err(VMError::RuntimeError("list index must be an integer".to_string()))
+                    };
+
+                    match list_val {
+                        Value::List(items) => {
+                            let effective_index = if index < 0 {
+                                items.len() as i64 + index
+                            } else {
+                                index
+                            };
+
+                            if effective_index < 0 || effective_index >= items.len() as i64 {
+                                return Err(VMError::RuntimeError("list index out of range".to_string()));
+                            }
+
+                            self.push(items[effective_index as usize].clone());
+                        }
+
+                        Value::Str(s) => {
+                            let char_count = s.chars().count() as i64;
+
+                            let effective_index = if index < 0 {
+                                char_count + index
+                            } else {
+                                index
+                            };
+
+                            if effective_index < 0 || effective_index >= char_count {
+                                return Err(VMError::RuntimeError("string index out of range".to_string()));
+                            }
+
+                            if let Some(c) = s.chars().nth(effective_index as usize) {
+                                self.push(Value::Str(c.to_string()));
+                            } else {
+                                return Err(VMError::RuntimeError("string index out of range".to_string()));
+                            }
+                        }
+
+                        _ => return Err(VMError::RuntimeError("object is not subscriptable".to_string()))
+                    }
+                }
+
+                OpCode::BuildList(count) => {
+                    let mut items = Vec::with_capacity(count);
+                    
+                    // Pop items from stack (they are in reverse order)
+                    for _ in 0..count {
+                        items.push(self.pop()?);
+                    }
+                    
+                    // Restore original order
+                    items.reverse();
+                    
+                    self.push(Value::List(items));
+                }
+
+                OpCode::Length => {
+                    let val = self.pop()?;
+                    match val {
+                        Value::List(items) => self.push(Value::Int(items.len() as i64)),
+                        Value::Str(s) => self.push(Value::Int(s.chars().count() as i64)),
+                        _ => return Err(VMError::RuntimeError("object has no length".to_string())),
+                    }
+                }
+
                 OpCode::Pop => { self.pop()?; }
 
                 OpCode::Jump(offset) => {
@@ -138,7 +229,7 @@ impl VM {
 
                 OpCode::JumpIfFalse(offset) => {
                     // Peek at the top (do not pop yet, needed for and/or)
-                    let val = self.stack.last().expect("Stack underflow in jump");
+                    let val = self.stack.last().expect("stack underflow in jump");
                     if !val.is_truthy() {
                         self.current_frame_mut().ip += offset;
                     }
@@ -190,6 +281,63 @@ impl VM {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a / b)), // Integer division
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a / b)),
                         _ => return Err(VMError::RuntimeError("invalid operands for /".to_string())),
+                    }
+                }
+
+                OpCode::Modulo => {
+                    let b = self.pop()?;
+                    let a = self.pop()?;
+
+                    match (a, b) {
+                        (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a % b)),
+                        (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a % b)),
+                        _ => return Err(VMError::RuntimeError("operands must be numbers".to_string())),
+                    }
+                }
+
+                OpCode::FloorDiv => {
+                    let b = self.pop()?;
+                    let a = self.pop()?;
+
+                    match (a, b) {
+                        (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a / b)), 
+                        (Value::Float(a), Value::Float(b)) => self.push(Value::Float((a / b).floor())),
+                        _ => return Err(VMError::RuntimeError("operands must be numbers".to_string())),
+                    }
+                }
+
+                OpCode::Power => {
+                    let b = self.pop()?; // exponent
+                    let a = self.pop()?; // base
+                    
+                    match (a, b) {
+                        (Value::Int(base), Value::Int(exp)) => {
+                            if exp < 0 {
+                                let result = (base as f64).powf(exp as f64);
+                                self.push(Value::Float(result));
+                            } else if let Ok(exp_u32) = u32::try_from(exp) {
+                                match base.checked_pow(exp_u32) {
+                                    Some(result) => self.push(Value::Int(result)),
+                                    None => return Err(VMError::RuntimeError("integer overflow in power".to_string())),
+                                }
+                            } else {
+                                return Err(VMError::RuntimeError("exponent too large".to_string()));
+                            }
+                        }
+
+                        (Value::Float(base), Value::Float(exp)) => {
+                            self.push(Value::Float(base.powf(exp)));
+                        }
+
+                        (Value::Int(base), Value::Float(exp)) => {
+                            self.push(Value::Float((base as f64).powf(exp)));
+                        }
+
+                        (Value::Float(base), Value::Int(exp)) => {
+                            self.push(Value::Float(base.powf(exp as f64)));
+                        }
+
+                        _ => return Err(VMError::RuntimeError("operands must be numbers".to_string()))
                     }
                 }
 

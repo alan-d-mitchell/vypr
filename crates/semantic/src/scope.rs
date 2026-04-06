@@ -4,7 +4,12 @@ use parser::ast::TypeExpr;
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolType {
     Locked(TypeExpr),
-    Dynamic
+    Dynamic,
+
+    Function {
+        params: Vec<TypeExpr>,
+        return_type: TypeExpr
+    }
 }
 
 

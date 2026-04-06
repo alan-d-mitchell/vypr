@@ -15,7 +15,8 @@ pub enum OpCode {
 
     Pop,
 
-    Add, Sub, Mul, Div,
+    Add, Sub, Mul, Div, 
+    Modulo, FloorDiv, Power,
 
     Equal, Less, Greater,
     LessEqual, GreaterEqual,
@@ -25,6 +26,10 @@ pub enum OpCode {
     Jump(usize),
     JumpIfFalse(usize),
     Loop(usize),
+
+    GetSubscript,
+    BuildList(usize),
+    Length,
 
     Call(usize),
     Return,

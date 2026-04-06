@@ -44,6 +44,12 @@ pub enum Stmt<'s> {
         body: Vec<Stmt<'s>>,
     },
 
+    For {
+        var: String,
+        iterator: Expr,
+        body: Vec<Stmt<'s>>
+    },
+
     ExprStmt(Expr),
 }
 
@@ -57,6 +63,11 @@ pub enum Expr {
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>
+    },
+
+    Subscript {
+        callee: Box<Expr>,
+        index: Box<Expr>
     },
 
     Binary {
