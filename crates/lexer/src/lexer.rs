@@ -51,7 +51,7 @@ impl<'l> Lexer<'l> {
 
             if line_begin && self.peek() != '\n' {
                 let current_indent = self.column;
-                let last_indent = *indentations.last().unwrap();
+                let last_indent = indentations.last().copied().unwrap_or(1);
 
                 if current_indent > last_indent {
                     // INDENT
@@ -74,19 +74,25 @@ impl<'l> Lexer<'l> {
                         }
 
                         if top < current_indent {
-                            self.errors.push(self.error("L004", "unexpected indentation level"));
+                            self.errors.push(self.error("L004", "dedent does not match any outer indentation level"));
+                            break;
                         }
-                        indentations.pop();
-                        
-                        tokens.push(Token {
-                            kind: TokenType::DEDENT,
-                            lexeme: "",
-                            span: Span {
-                                line: self.line,
-                                column: self.column,
-                                length: 0
-                            }
-                        });
+
+                        if indentations.len() > 1 {
+                            indentations.pop();
+
+                            tokens.push(Token {
+                                kind: TokenType::DEDENT,
+                                lexeme: "",
+                                span: Span {
+                                    line: self.line,
+                                    column: self.column,
+                                    length: 0
+                                }
+                            });
+                        } else {
+                            break;
+                        }
                     }
                 }
 
