@@ -1,4 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use error::error::{Span, VyprError};
+
 use crate::{bytecode::{Chunk, OpCode}, value::{Value, DataType}};
 
 #[derive(Clone)]
@@ -17,11 +19,6 @@ pub struct VM {
     frames: Vec<CallFrame>, // The call stack
     stack: Vec<Value>,      // The operand stack
     globals: HashMap<String, GlobalVar>
-}
-
-#[derive(Debug)]
-pub enum VMError {
-    RuntimeError(String),
 }
 
 impl VM {
@@ -77,7 +74,19 @@ impl VM {
         }
     }
 
-    pub fn run(&mut self) -> Result<(), VMError> {
+    fn error(&self, code: &'static str, message: impl Into<String>) -> VyprError {
+        let ip = self.current_frame().ip.saturating_sub(1);
+
+        let span = if ip < self.current_frame().chunk.spans.len() {
+            self.current_frame().chunk.spans[ip]
+        } else {
+            Span::default()
+        };
+
+        VyprError::new(code, message, span)
+    }
+
+    pub fn run(&mut self) -> Result<(), VyprError> {
         loop {
             // Check if we have finished the top frame
             if self.current_frame().ip >= self.current_frame().chunk.code.len() {
@@ -115,7 +124,7 @@ impl VM {
 
                     match self.globals.get(&name) {
                         Some(global) => self.push(global.value.clone()),
-                        None => return Err(VMError::RuntimeError(format!("undefined variable '{}'", name))),
+                        None => return Err(self.error("R001", format!("undefined variable '{}'", name))),
                     }
                 }
 
@@ -123,19 +132,21 @@ impl VM {
                     let name = self.read_string(name_idx)?;
                     let new_val = self.pop()?;
 
-                    if let Some(global) = self.globals.get_mut(&name) {
-                        if global.lock != DataType::Any {
+                    let existing_lock = self.globals.get(&name).map(|g| g.lock);
+
+                    if let Some(lock) = existing_lock {
+                        if lock != DataType::Any {
                             let new_type = new_val.get_type();
 
-                            if new_type != global.lock {
-                                return Err(VMError::RuntimeError(format!(
+                            if new_type != lock {
+                                return Err(self.error("R002", format!(
                                     "type error: variable '{}' is locked to {:?}, but got {:?}", 
-                                    name, global.lock, new_type
+                                    name, lock, new_type
                                 )));
                             }
                         }
 
-                        global.value = new_val;
+                        self.globals.get_mut(&name).unwrap().value = new_val;
                     } else {
                         self.globals.insert(name, GlobalVar {
                             value: new_val,
@@ -176,7 +187,7 @@ impl VM {
                     match (obj, method_name.as_str()) {
                         (Value::List(items), "append") => {
                             if args.len() != 1 {
-                                return Err(VMError::RuntimeError("append() takes exactly 1 argument".to_string()));
+                                return Err(self.error("R003", "append() takes exactly 1 argument").with_help("remove the extra argument"));
                             }
                             
                             items.borrow_mut().push(args[0].clone());
@@ -185,7 +196,7 @@ impl VM {
                         }
                         
                         (val, method) => {
-                            return Err(VMError::RuntimeError(format!("object '{:?}' has no method '{}'", val.get_type() , method)));
+                            return Err(self.error("R004", format!("object '{:?}' has no method '{}'", val.get_type() , method)));
                         }
                     }
                 }
@@ -196,7 +207,7 @@ impl VM {
 
                     let index = match index_val {
                         Value::Int(i) => i,
-                        _ => return Err(VMError::RuntimeError("list index must be an integer".to_string()))
+                        _ => return Err(self.error("R002", "list index must be an integer"))
                     };
 
                     match list_val {
@@ -210,7 +221,7 @@ impl VM {
                             };
 
                             if effective_index < 0 || effective_index >= borrowed.len() as i64 {
-                                return Err(VMError::RuntimeError("list index out of range".to_string()));
+                                return Err(self.error("R003", "list index out of range"));
                             }
 
                             self.push(borrowed[effective_index as usize].clone());
@@ -226,13 +237,13 @@ impl VM {
                             };
 
                             if effective_index < 0 || effective_index >= char_count {
-                                return Err(VMError::RuntimeError("string index out of range".to_string()));
+                                return Err(self.error("R003", "string index out of range"));
                             }
 
                             if let Some(c) = s.chars().nth(effective_index as usize) {
                                 self.push(Value::Str(c.to_string()));
                             } else {
-                                return Err(VMError::RuntimeError("string index out of range".to_string()));
+                                return Err(self.error("R003", "string index out of range"));
                             }
                         }
 
@@ -241,13 +252,13 @@ impl VM {
                             let effective_index = if index < 0 { len + index } else { index };
 
                             if effective_index < 0 || effective_index >= len {
-                                return Err(VMError::RuntimeError("range object index out of range".to_string()));
+                                return Err(self.error("R003", "range object index out of range"));
                             }
 
                             self.push(Value::Int(start + effective_index));
                         }
 
-                        _ => return Err(VMError::RuntimeError("object is not subscriptable".to_string()))
+                        _ => return Err(self.error("R002", "object is not subscriptable"))
                     }
                 }
 
@@ -276,7 +287,7 @@ impl VM {
                             self.push(Value::Int(len));
                         }
 
-                        _ => return Err(VMError::RuntimeError("object has no length".to_string())),
+                        _ => return Err(self.error("R002", "object has no length")),
                     }
                 }
 
@@ -306,7 +317,7 @@ impl VM {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a + b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a + b)),
                         (Value::Str(a), Value::Str(b)) => self.push(Value::Str(a + &b)),
-                        _ => return Err(VMError::RuntimeError("invalid operands for +".to_string())),
+                        _ => return Err(self.error("R002", "invalid operands for +")),
                     }
                 }
 
@@ -317,7 +328,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a - b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a - b)),
-                        _ => return Err(VMError::RuntimeError("invalid operands for -".to_string())),
+                        _ => return Err(self.error("R002", "invalid operands for -")),
                     }
                 }
 
@@ -328,7 +339,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a * b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a * b)),
-                        _ => return Err(VMError::RuntimeError("invalid operands for *".to_string())),
+                        _ => return Err(self.error("R002", "invalid operands for *")),
                     }
                 }
 
@@ -339,7 +350,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a / b)), // Integer division
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a / b)),
-                        _ => return Err(VMError::RuntimeError("invalid operands for /".to_string())),
+                        _ => return Err(self.error("R002", "invalid operands for /")),
                     }
                 }
 
@@ -350,7 +361,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a % b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a % b)),
-                        _ => return Err(VMError::RuntimeError("operands must be numbers".to_string())),
+                        _ => return Err(self.error("R002", "operands must be numbers")),
                     }
                 }
 
@@ -361,7 +372,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a / b)), 
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float((a / b).floor())),
-                        _ => return Err(VMError::RuntimeError("operands must be numbers".to_string())),
+                        _ => return Err(self.error("R002", "operands must be numbers")),
                     }
                 }
 
@@ -377,10 +388,10 @@ impl VM {
                             } else if let Ok(exp_u32) = u32::try_from(exp) {
                                 match base.checked_pow(exp_u32) {
                                     Some(result) => self.push(Value::Int(result)),
-                                    None => return Err(VMError::RuntimeError("integer overflow in power".to_string())),
+                                    None => return Err(self.error("R005", "integer overflow in power".to_string())),
                                 }
                             } else {
-                                return Err(VMError::RuntimeError("exponent too large".to_string()));
+                                return Err(self.error("R005", "exponent too large"));
                             }
                         }
 
@@ -396,7 +407,7 @@ impl VM {
                             self.push(Value::Float(base.powf(exp as f64)));
                         }
 
-                        _ => return Err(VMError::RuntimeError("operands must be numbers".to_string()))
+                        _ => return Err(self.error("R002", "operands must be numbers"))
                     }
                 }
 
@@ -414,7 +425,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a < b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a < b)),
-                        _ => return Err(VMError::RuntimeError("invalid operands for <".to_string())),
+                        _ => return Err(self.error("R002", "invalid operands for <")),
                     }
                 }
 
@@ -425,7 +436,7 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a > b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a > b)),
-                        _ => return Err(VMError::RuntimeError("invalid operands for >".to_string())),
+                        _ => return Err(self.error("R002", "invalid operands for >")),
                     }
                 }
 
@@ -436,10 +447,11 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a <= b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a <= b)),
+
                         // Int/Float mixing
                         (Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) <= b)),
                         (Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a <= (b as f64))),
-                        _ => return Err(VMError::RuntimeError("invalid types for <=".to_string())),
+                        _ => return Err(self.error("R002", "invalid types for <=")),
                     }
                 }
 
@@ -450,10 +462,11 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a >= b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a >= b)),
+
                         // Int/Float mixing
                         (Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) >= b)),
                         (Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a >= (b as f64))),
-                        _ => return Err(VMError::RuntimeError("invalid types for >=".to_string())),
+                        _ => return Err(self.error("R002", "invalid types for >=")),
                     }
                 }
 
@@ -463,7 +476,7 @@ impl VM {
                     match a {
                         Value::Int(i) => self.push(Value::Int(-i)),
                         Value::Float(f) => self.push(Value::Float(-f)),
-                        _ => return Err(VMError::RuntimeError("operand must be a number".to_string())),
+                        _ => return Err(self.error("R002", "operand must be a number")),
                     }
                 }
 
@@ -472,7 +485,7 @@ impl VM {
 
                     match a {
                         Value::Bool(b) => self.push(Value::Bool(!b)),
-                        _ => return Err(VMError::RuntimeError("operand must be a boolean".to_string())),
+                        _ => return Err(self.error("R002", "operand must be a boolean")),
                     }
                 }
 
@@ -500,7 +513,11 @@ impl VM {
         self.frames.last_mut().expect("Call stack empty")
     }
 
-    fn call_value(&mut self, arg_count: usize) -> Result<(), VMError> {
+    fn call_value(&mut self, arg_count: usize) -> Result<(), VyprError> {
+        if self.frames.len() >= 1000 {
+            return Err(self.error("R006", "maximum recursion depth exceeded"));
+        }
+
         let _frame_start = self.stack.len() - arg_count;
 
         let func_idx = self.stack.len() - 1 - arg_count;
@@ -549,7 +566,7 @@ impl VM {
                 Ok(())
             }
 
-            _ => Err(VMError::RuntimeError("can only call functions".to_string()))
+            _ => Err(self.error("R004", "can only call functions"))
         }
     }
 
@@ -557,10 +574,10 @@ impl VM {
         self.current_frame().chunk.constants[idx].clone()
     }
 
-    fn read_string(&self, idx: usize) -> Result<String, VMError> {
+    fn read_string(&self, idx: usize) -> Result<String, VyprError> {
         match self.read_constant(idx) {
             Value::Str(s) => Ok(s),
-            _ => Err(VMError::RuntimeError("expected string in constant pool".to_string())),
+            _ => Err(self.error("R005", "expected string in constant pool")),
         }
     }
 
@@ -568,7 +585,7 @@ impl VM {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> Result<Value, VMError> {
-        self.stack.pop().ok_or(VMError::RuntimeError("stack underflow".to_string()))
+    fn pop(&mut self) -> Result<Value, VyprError> {
+        self.stack.pop().ok_or_else(|| self.error("RPNC", "stack underflow")) // RPNC = Runtime Panic
     }
 }
