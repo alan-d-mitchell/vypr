@@ -189,7 +189,7 @@ impl<'p> Parser<'p> {
         let keyword = self.previous();
         let mut value = None;
 
-        if !self.check(TokenType::NEWLINE) {
+        if !self.check(TokenType::NEWLINE) && !self.check(TokenType::SEMICOLON) {
             value = Some(self.expression()?);
         }
 
@@ -203,7 +203,12 @@ impl<'p> Parser<'p> {
 
     fn expression_statement(&mut self) -> Result<Stmt<'p>, String> {
         let expr = self.expression()?;
-        self.match_token(TokenType::NEWLINE);
+
+        if self.check(TokenType::SEMICOLON) {
+            self.advance();
+        } else {
+            self.match_token(TokenType::NEWLINE);
+        }
 
         Ok(Stmt::ExprStmt(expr))
     }
