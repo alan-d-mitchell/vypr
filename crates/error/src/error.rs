@@ -30,22 +30,27 @@ impl VyprError {
         self
     }
 
-    pub fn report(&self, source: &str, fname: &str) {
+    pub fn report(&self, source: &str, filename: &str) {
         let line = self.span.line.saturating_sub(1);
         let column = self.span.column.saturating_sub(1);
         let span_length = self.span.length.max(1);
 
         let line_str = source.lines().nth(line).unwrap_or("");
 
-        eprintln!("\nerror[{}]\n{}", self.code, self.message);
-        eprintln!("  --> {}:{}:{}", fname, self.span.line, self.span.column);
-        eprintln!("   |");
-        eprintln!("{:>3} | {}", self.span.line, line_str);
-        eprintln!("   | {}{}", " ".repeat(column), "^".repeat(span_length));
-        eprintln!("   |");
+        let red = "\x1b[31;1m";
+        let blue = "\x1b[34;1m";
+        let green = "\x1b[32;1m";
+        let reset = "\x1b[0m";
 
-        if let Some(help) = &self.help {
-            eprintln!("      = help: {}", help);
+        eprintln!("\n{}error[{}]{}\n{}", red, self.code, reset, self.message);
+        eprintln!("  {}-->{} {}{}:{}:{}{}", blue, reset, blue, filename, self.span.line, self.span.column, reset);
+        eprintln!("   {}|{}", blue, reset);
+        eprintln!("{}{:>2} |{} {}", blue, self.span.line, reset, line_str);
+        eprintln!("   {}|{} {}{}{}{}", blue, reset, " ".repeat(column), blue, "^".repeat(span_length), reset);
+        eprintln!("   {}|{}", blue, reset);
+
+        if let Some(help_msg) = &self.help {
+            eprintln!("     {}= help: {}{}", green, help_msg, reset);
         }
     }
 }
