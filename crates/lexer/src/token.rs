@@ -1,3 +1,5 @@
+use error::error::Span;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
 
@@ -88,6 +90,5 @@ pub enum TokenType {
 pub struct Token<'t> {
     pub kind: TokenType,
     pub lexeme: &'t str,
-    pub line: usize,
-    pub column: usize,
+    pub span: Span,
 }

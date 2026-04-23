@@ -1,4 +1,5 @@
 use super::token::{Token, TokenType};
+use error::error::{Span, VyprError};
 
 pub struct Lexer<'l> {
     input: &'l str,
@@ -26,7 +27,15 @@ impl<'l> Lexer<'l> {
         }
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<Token<'l>>, String> {
+    fn error(&self, code: &'static str, message: impl Into<String>) -> VyprError {
+        VyprError::new(code, message, Span {
+            line: self.line,
+            column: self.column,
+            length: 1,
+        })
+    }
+
+    pub fn tokenize(&mut self) -> Result<Vec<Token<'l>>, VyprError> {
         let mut tokens = Vec::new();
         let mut indentations = vec![1];
         let mut line_begin = true;
@@ -49,8 +58,11 @@ impl<'l> Lexer<'l> {
                     tokens.push(Token {
                         kind: TokenType::INDENT,
                         lexeme: "",
-                        line: self.line,
-                        column: self.column
+                        span: Span {
+                            line: self.line,
+                            column: self.column,
+                            length: 0
+                        }
                     });
                 } else if current_indent < last_indent {
                     // DEDENT
@@ -60,15 +72,18 @@ impl<'l> Lexer<'l> {
                         }
 
                         if top < current_indent {
-                            return Err(format!("unexpected indentation at line {}", self.line));
+                            return Err(self.error("L004", "unexpected indentation level"));
                         }
                         indentations.pop();
                         
                         tokens.push(Token {
                             kind: TokenType::DEDENT,
                             lexeme: "",
-                            line: self.line,
-                            column: self.column
+                            span: Span {
+                                line: self.line,
+                                column: self.column,
+                                length: 0
+                            }
                         });
                     }
                 }
@@ -78,9 +93,6 @@ impl<'l> Lexer<'l> {
 
             self.start = self.current;
             self.start_byte = self.current_byte;
-
-            let start_line = self.line;
-            let start_column = self.column;
 
             if let Some(kind) = self.scan_token()? {
                 if kind == TokenType::NEWLINE {
@@ -92,8 +104,11 @@ impl<'l> Lexer<'l> {
                 tokens.push(Token {
                     kind,
                     lexeme,
-                    line: start_line,
-                    column: start_column,
+                    span: Span {
+                        line: self.line,
+                        column: self.column,
+                        length: lexeme.len().max(1)
+                    }
                 });
             }
         }
@@ -104,22 +119,28 @@ impl<'l> Lexer<'l> {
             tokens.push(Token {
                 kind: TokenType::DEDENT,
                 lexeme: "",
-                line: self.line,
-                column: self.column
+                span: Span {
+                    line: self.line,
+                    column: self.column,
+                    length: 0,
+                }
             });
         }
 
         tokens.push(Token {
             kind: TokenType::EOF,
             lexeme: "",
-            line: self.line,
-            column: self.column,
+            span: Span {
+                line: self.line,
+                column: self.column,
+                length: 0,
+            }
         });
 
         Ok(tokens)
     }
 
-    fn scan_token(&mut self) -> Result<Option<TokenType>, String> {
+    fn scan_token(&mut self) -> Result<Option<TokenType>, VyprError> {
         self.skip_whitespace();
 
         if self.is_at_end() {
@@ -217,16 +238,14 @@ impl<'l> Lexer<'l> {
             } else if c.is_ascii_alphabetic() || c == '_' {
                 return self.scan_identifier(c);
             } else {
-                return Err(format!("unexpected character '{}' at line {}, column {}", 
-                    c, self.line, self.column)
-                );
+                return Err(self.error("L001", format!("unexpected character '{}'", c)))
             }
         };
 
         result
     }
 
-    fn scan_string(&mut self, quote: char) -> Result<TokenType, String> {
+    fn scan_string(&mut self, quote: char) -> Result<TokenType, VyprError> {
         let mut value = Vec::new();
 
         while !self.is_at_end() {
@@ -235,7 +254,7 @@ impl<'l> Lexer<'l> {
             match c {
                 '\\' => {
                     if self.is_at_end() {
-                        return Err("unterminated escape sequence in string literal".into());
+                        return Err(self.error("L002", "unterminated escape sequence in string literal"));
                     }
 
                     let escaped = self.advance();
@@ -248,7 +267,7 @@ impl<'l> Lexer<'l> {
                         '"' => '"',
 
                         _ => {
-                            return Err(format!("unknown escape sequence: \\{}", escaped));
+                            return Err(self.error("L003", format!("unknown escape sequence \\{}", escaped)))
                         }
                     };
 
@@ -262,7 +281,7 @@ impl<'l> Lexer<'l> {
                 }
 
                 '\n' => {
-                    return Err("unterminated string literal".into());
+                    return Err(self.error("L002", "unterminated string literal (newline found)"))
                 }
 
                 _ => {
@@ -271,10 +290,10 @@ impl<'l> Lexer<'l> {
             }
         }
 
-        Err("unterminated string literal at EOF".into())
+        Err(self.error("L002", "unterminated string literal at EOF"))
     }
 
-    fn scan_number(&mut self, first: char) -> Result<Option<TokenType>, String> {
+    fn scan_number(&mut self, first: char) -> Result<Option<TokenType>, VyprError> {
         if first == '0' {
             match self.peek() {
                 'x' | 'X' => {
@@ -308,18 +327,18 @@ impl<'l> Lexer<'l> {
             }
 
             let val = text.parse::<f64>()
-                .map_err(|_| "invalid float literal".to_string())?;
+                .map_err(|_| self.error("L005", "invalid float literal"))?;
 
             return Ok(Some(TokenType::FLOAT_LITERAL(val)));
         }
 
         let val = text.parse::<i64>()
-            .map_err(|_| "invalid integer literal".to_string())?;
+            .map_err(|_| self.error("L005", "invalid integer literal"))?; 
 
         Ok(Some(TokenType::INT_LITERAL(val)))
     }
 
-    fn scan_from_base<F>(&mut self, radix: u32, valid: F) -> Result<Option<TokenType>, String> 
+    fn scan_from_base<F>(&mut self, radix: u32, valid: F) -> Result<Option<TokenType>, VyprError> 
     where F: Fn(char) -> bool
     {
         let mut text = String::new();
@@ -329,16 +348,16 @@ impl<'l> Lexer<'l> {
         }
         
         if text.is_empty() {
-            return Err("expected digits after base prefix".into());
+            return Err(self.error("L006", "expected digits after base prefix"))
         }
 
         let val = i64::from_str_radix(&text, radix)
-            .map_err(|_| "integer literal overflow".to_string())?;
+            .map_err(|_| self.error("L005", "integer literal overflow"))?;
 
         Ok(Some(TokenType::INT_LITERAL(val)))
     }
 
-    fn scan_identifier(&mut self, _c: char) -> Result<Option<TokenType>, String> {
+    fn scan_identifier(&mut self, _c: char) -> Result<Option<TokenType>, VyprError> {
         while self.peek().is_ascii_alphanumeric() || self.peek() == '_' {
             self.advance();
         }
@@ -401,7 +420,7 @@ impl<'l> Lexer<'l> {
         }
     }
 
-    fn skip_multiline_comment(&mut self, quote: char) -> Result<(), String> {
+    fn skip_multiline_comment(&mut self, quote: char) -> Result<(), VyprError> {
         self.advance();
         self.advance();
 
@@ -421,7 +440,7 @@ impl<'l> Lexer<'l> {
             }
         }
 
-        Err("unterminated multiline comment".to_string())
+        Err(self.error("L007", "unterminated multiline comment"))
     }
 
     fn skip_whitespace(&mut self) {
