@@ -1,6 +1,6 @@
-use error::error::VyprError;
+use error::error::{Span, VyprError};
 use lexer::token::{Token, TokenType};
-use crate::ast::{Param, TypeExpr};
+use crate::ast::{Param, TypeExpr, StmtKind, ExprKind};
 
 use super::ast::{Stmt, Expr};
 
@@ -61,7 +61,7 @@ impl<'p> Parser<'p> {
 
             match self.peek().kind {
                 TokenType::DEF | TokenType::IF | TokenType::FOR | 
-                TokenType::WHILE | TokenType::RETURN => return,
+                TokenType::WHILE | TokenType::PASS | TokenType::RETURN => return,
                 _ => {}
             }
 
@@ -90,10 +90,16 @@ impl<'p> Parser<'p> {
             return self.return_statement();
         }
 
+        if self.match_token(TokenType::PASS) {
+            return self.pass_statement();
+        }
+
         if let TokenType::IDENTIFIER(name) = self.peek().kind {
             if self.check_identifier() {
+                let span = self.peek().span;
                 self.advance();
-                return self.var_declaration(name);
+
+                return self.var_declaration(name, span);
             }
         }
 
@@ -123,7 +129,7 @@ impl<'p> Parser<'p> {
                 }
             }
 
-            _ => return Err(self.make_error("P002", format!("expected type, found {:?}", token.lexeme))),
+            _ => return Err(self.make_error("P002", format!("expected type, found {}", token.lexeme))),
         };
 
         if self.match_token(TokenType::PIPE) {
@@ -135,7 +141,9 @@ impl<'p> Parser<'p> {
     }
     
     fn if_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
-        self.consume(TokenType::IF, "expected 'if'")?;
+        let token = self.consume(TokenType::IF, "expected 'if'")?;
+        let span = token.span;
+
         let condition = self.expression()?;
         self.consume(TokenType::COLON, "expected ':' after if condtion")?;
         
@@ -152,14 +160,18 @@ impl<'p> Parser<'p> {
             else_b = Some(self.block()?);
         }
 
-        Ok(Stmt::If {
-            condition,
-            then,
-            else_b
+        Ok(Stmt {
+            kind: StmtKind::If {
+                condition,
+                then, else_b
+            },
+            span
         })
     }
 
     fn if_statement_inner(&mut self) -> Result<Stmt<'p>, VyprError> {
+        let span = self.previous().span;
+
         let condition = self.expression()?;
         self.consume(TokenType::COLON, "expected ':'")?;
         let then = self.block()?;
@@ -176,15 +188,20 @@ impl<'p> Parser<'p> {
             else_b = Some(self.block()?);
         }
 
-        Ok(Stmt::If {
-            condition,
-            then,
-            else_b
+        Ok(Stmt {
+            kind: StmtKind::If {
+                condition,
+                then,
+                else_b
+            },
+            span
         })
     }
 
     fn for_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
-        self.consume(TokenType::FOR, "expected 'for'")?;
+        let start_token = self.consume(TokenType::FOR, "expected 'for'")?;
+        let span = start_token.span;
+
         let token = self.advance();
 
         let var_name = match token.kind {
@@ -205,56 +222,64 @@ impl<'p> Parser<'p> {
 
         let body = self.block()?;
 
-        Ok(Stmt::For {
-            var: var_name,
-            iterator,
-            body
+        Ok(Stmt { 
+            kind: StmtKind::For { var: var_name, iterator, body }, 
+            span 
         })
     }
 
     fn while_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
-        self.consume(TokenType::WHILE, "expected 'while'")?;
+        let token = self.consume(TokenType::WHILE, "expected 'while'")?;
+        let span = token.span;
+
         let condition = self.expression()?;
         self.consume(TokenType::COLON, "expected ':' after while condition")?;
         
         let body = self.block()?;
         
-        Ok(Stmt::While { 
-            condition, 
-            body 
+        Ok(Stmt { 
+            kind: StmtKind::While { condition, body }, 
+            span 
         })
     }
 
     fn return_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         let keyword = self.previous();
+        let span = keyword.span;
+
         let mut value = None;
 
         if !self.check(TokenType::NEWLINE) && !self.check(TokenType::SEMICOLON) {
             value = Some(self.expression()?);
         }
 
-        self.match_token(TokenType::NEWLINE);
+        self.consume_statement_end()?;
 
-        Ok(Stmt::Return {
-            keyword,
-            value
+        Ok(Stmt { 
+            kind: StmtKind::Return { keyword, value }, 
+            span 
         })
+    }
+
+    fn pass_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
+        let span = self.previous().span;
+
+        self.consume_statement_end()?;
+
+        Ok(Stmt { kind: StmtKind::Pass, span })
     }
 
     fn expression_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         let expr = self.expression()?;
+        let span = expr.span;
 
-        if self.check(TokenType::SEMICOLON) {
-            self.advance();
-        } else {
-            self.match_token(TokenType::NEWLINE);
-        }
+        self.consume_statement_end()?;
 
-        Ok(Stmt::ExprStmt(expr))
+        Ok(Stmt { kind: StmtKind::ExprStmt(expr), span })
     }
 
 
-    fn var_declaration(&mut self, name: String) -> Result<Stmt<'p>, VyprError> {
+    fn var_declaration(&mut self, name: String, span: Span) -> Result<Stmt<'p>, VyprError> {
         let mut annotation = None;
 
         if self.match_token(TokenType::COLON) {
@@ -285,29 +310,28 @@ impl<'p> Parser<'p> {
 
             if let Some(op) = operator {
                 let right = self.expression()?;
+                let var_span = span;
 
-                value = Some(Expr::Binary {
-                    left: Box::new(Expr::Variable(name.clone())),
-                    operator: op,
-                    right: Box::new(right)
+                value = Some(Expr {
+                    kind: ExprKind::Binary {
+                        left: Box::new(Expr { kind: ExprKind::Variable(name.clone()), span: var_span }),
+                        operator: op,
+                        right: Box::new(right)
+                    },
+                    span: var_span
                 });
             }
         }
 
-        if self.check(TokenType::SEMICOLON) {
-            self.advance();
-        } else {
-            self.match_token(TokenType::NEWLINE);
-        }
+        self.consume_statement_end()?;
 
-        Ok(Stmt::VarDecl {
-            name,
-            value,
-            annotation
+        Ok(Stmt { 
+            kind: StmtKind::VarDecl { name, value, annotation }, 
+            span 
         })
     }
 
-    fn list_literal(&mut self) -> Result<Expr, VyprError> {
+    fn list_literal(&mut self) -> Result<ExprKind, VyprError> {
         let mut elements = Vec::new();
 
         if !self.check(TokenType::RBRACKET) {
@@ -324,10 +348,12 @@ impl<'p> Parser<'p> {
             return Err(self.make_error("P004", "expected ']' after list elements"))
         }
 
-        Ok(Expr::List(elements))
+        Ok(ExprKind::List(elements))
     }
     
     fn function_declaration(&mut self) -> Result<Stmt<'p>, VyprError> {
+        let span = self.previous().span;
+
         let name = match self.advance().kind {
             TokenType::IDENTIFIER(s) => s,
             _ => return Err(self.make_error("P005", "expected function name"))
@@ -380,11 +406,9 @@ impl<'p> Parser<'p> {
 
         let body = self.block()?;
 
-        Ok(Stmt::FuncDecl {
-            name,
-            params,
-            return_type,
-            body
+        Ok(Stmt { 
+            kind: StmtKind::FuncDecl { name, params, return_type, body },
+            span
         })
     }
 
@@ -420,11 +444,11 @@ impl<'p> Parser<'p> {
         while self.match_token(TokenType::OR) {
             let operator = self.previous().kind;
             let right = self.logic_and()?;
+            let span = expr.span;
 
-            expr = Expr::Binary { 
-                left: Box::new(expr), 
-                operator, 
-                right: Box::new(right) 
+            expr = Expr { 
+                kind: ExprKind::Binary { left: Box::new(expr), operator, right: Box::new(right) }, 
+                span 
             };
         }
 
@@ -437,11 +461,11 @@ impl<'p> Parser<'p> {
         while self.match_token(TokenType::AND) {
             let operator = self.previous().kind;
             let right = self.equality()?;
+            let span = expr.span;
 
-            expr = Expr::Binary { 
-                left: Box::new(expr), 
-                operator, 
-                right: Box::new(right) 
+            expr = Expr { 
+                kind: ExprKind::Binary { left: Box::new(expr), operator, right: Box::new(right) }, 
+                span 
             };
         }
 
@@ -454,11 +478,11 @@ impl<'p> Parser<'p> {
         while self.match_token(TokenType::DOUBLE_EQUAL) {
             let operator = self.previous().kind;
             let right = self.comparison()?;
+            let span = expr.span;
 
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator,
-                right: Box::new(right),
+            expr = Expr {
+                kind: ExprKind::Binary { left: Box::new(expr), operator, right: Box::new(right) },
+                span
             };
         }
 
@@ -473,11 +497,11 @@ impl<'p> Parser<'p> {
         {
             let operator = self.previous().kind;
             let right = self.term()?;
+            let span = expr.span;
 
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator,
-                right: Box::new(right)
+            expr = Expr {
+                kind: ExprKind::Binary { left: Box::new(expr), operator, right: Box::new(right) },
+                span
             };
         }
 
@@ -490,11 +514,11 @@ impl<'p> Parser<'p> {
         while self.match_tokens(&[TokenType::PLUS, TokenType::MINUS]) {
             let operator = self.previous().kind;
             let right = self.factor()?;
+            let span = expr.span;
 
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator,
-                right: Box::new(right)
+            expr = Expr {
+                kind: ExprKind::Binary { left: Box::new(expr), operator, right: Box::new(right) },
+                span
             };
         }
 
@@ -512,11 +536,11 @@ impl<'p> Parser<'p> {
         {
             let operator = self.previous().kind;
             let right = self.unary()?;
+            let span = expr.span;
 
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator,
-                right: Box::new(right),
+            expr = Expr {
+                kind: ExprKind::Binary { left: Box::new(expr), operator, right: Box::new(right) },
+                span
             };
         }
 
@@ -526,11 +550,12 @@ impl<'p> Parser<'p> {
     fn unary(&mut self) -> Result<Expr, VyprError> {
         if self.match_tokens(&[TokenType::MINUS, TokenType::NOT]) {
             let operator = self.previous().kind;
+            let span = self.previous().span;
             let right = self.unary()?; // Recursive for --5
 
-            return Ok(Expr::Unary {
-                operator,
-                right: Box::new(right),
+            return Ok(Expr {
+                kind: ExprKind::Unary { operator, right: Box::new(right) },
+                span
             });
         }
 
@@ -543,12 +568,12 @@ impl<'p> Parser<'p> {
         if self.match_token(TokenType::DOUBLE_STAR) {
             let operator = self.previous().kind;
             let right = self.unary()?;
+            let span = expr.span;
 
-            expr = Expr::Binary { 
-                left: Box::new(expr), 
-                operator, 
-                right: Box::new(right)
-            };
+            expr = Expr {
+                kind: ExprKind::Binary { left: Box::new(expr), operator, right: Box::new(right) },
+                span
+            }
         }
 
         Ok(expr)
@@ -573,36 +598,35 @@ impl<'p> Parser<'p> {
     }
 
     fn primary(&mut self) -> Result<Expr, VyprError> {
+        let span = self.peek().span;
         let token = self.advance();
 
-        match token.kind {
+        let kind = match token.kind {
             TokenType::INT_LITERAL(_) | TokenType::FLOAT_LITERAL(_) |
             TokenType::STR_LITERAL(_) | TokenType::TRUE | TokenType::FALSE |
-            TokenType::NONE => Ok(Expr::Literal(token.kind)),
+            TokenType::NONE => ExprKind::Literal(token.kind),
 
-            TokenType::IDENTIFIER(name) => Ok(Expr::Variable(name)),
+            TokenType::IDENTIFIER(name) => ExprKind::Variable(name),
 
-            TokenType::INT => Ok(Expr::Variable("int".to_string())),
-            TokenType::FLOAT => Ok(Expr::Variable("float".to_string())),
-            TokenType::STR => Ok(Expr::Variable("str".to_string())),
-            TokenType::BOOL => Ok(Expr::Variable("bool".to_string())),
-            TokenType::LIST => Ok(Expr::Variable("list".to_string())),
-            TokenType::RANGE => Ok(Expr::Variable("range".to_string())),
+            TokenType::INT => ExprKind::Variable("int".to_string()),
+            TokenType::FLOAT => ExprKind::Variable("float".to_string()),
+            TokenType::STR => ExprKind::Variable("str".to_string()),
+            TokenType::BOOL => ExprKind::Variable("bool".to_string()),
+            TokenType::LIST => ExprKind::Variable("list".to_string()),
+            TokenType::RANGE => ExprKind::Variable("range".to_string()),
 
-            TokenType::LBRACKET => self.list_literal(),
-            
+            TokenType::LBRACKET => self.list_literal()?,
+
             TokenType::LPAREN => {
                 let expr = self.expression()?;
-
-                if !self.match_token(TokenType::RPAREN) {
-                    return Err(self.make_error("P012", "expected ')' after expression."));
-                }
-
-                Ok(Expr::Grouping(Box::new(expr)))
+                self.consume(TokenType::RPAREN, "expected ')' after expression")?;
+                ExprKind::Grouping(Box::new(expr))
             }
 
-            _ => Err(self.make_error("P013", format!("expected expression, found {:?}", token.lexeme))),
-        }
+            _ => return Err(self.make_error("P013", format!("expected expression, found {}", token.lexeme)))
+        };
+
+        Ok(Expr { kind, span })
     }
 
     fn match_tokens(&mut self, kinds: &[TokenType]) -> bool {
@@ -617,6 +641,7 @@ impl<'p> Parser<'p> {
     }
 
     fn finish_call(&mut self, callee: Expr) -> Result<Expr, VyprError> {
+        let span = callee.span;
         let mut args = Vec::new();
 
         if !self.check(TokenType::RPAREN) {
@@ -631,13 +656,12 @@ impl<'p> Parser<'p> {
 
         self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
 
-        Ok(Expr::Call {
-            callee: Box::new(callee),
-            args,
-        })
+        Ok(Expr { kind: ExprKind::Call { callee: Box::new(callee), args }, span })
     }
 
     fn finish_method_call(&mut self, callee: Expr) -> Result<Expr, VyprError> {
+        let span = callee.span;
+
         let method_name = match self.advance().kind {
             TokenType::IDENTIFIER(name) => name,
             _ => return Err(self.make_error("P014", "expected method name after '.'")),
@@ -657,22 +681,16 @@ impl<'p> Parser<'p> {
 
         self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
 
-        Ok(Expr::MethodCall {
-            callee: Box::new(callee),
-            method: method_name,
-            args,
-        })
+        Ok(Expr { kind: ExprKind::MethodCall { callee: Box::new(callee), method: method_name, args }, span })
     }
 
     fn finish_subscript(&mut self, callee: Expr) -> Result<Expr, VyprError> {
+        let span = callee.span;
         let index = self.expression()?;
 
         self.consume(TokenType::RBRACKET, "expected ']' after subscript")?;
 
-        Ok(Expr::Subscript {
-            callee: Box::new(callee),
-            index: Box::new(index),
-        })
+        Ok(Expr { kind: ExprKind::Subscript { callee: Box::new(callee), index: Box::new(index) }, span })
     }
 
     fn check_identifier(&self) -> bool {
@@ -680,15 +698,11 @@ impl<'p> Parser<'p> {
             return false;
         }
 
-        let next_kind = &self.tokens[self.current + 1].kind;
-        match next_kind {
-            TokenType::EQUAL | TokenType::COLON |
-            TokenType::PLUS_EQUAL | TokenType::MINUS_EQUAL |
-            TokenType::STAR_EQUAL | TokenType::FSLASH_EQUAL |
-            TokenType::DOUBLE_FSLASH_EQUAL | TokenType::MODULO_EQUAL |
-            TokenType::DOUBLE_STAR_EQUAL => true,
-            _ => false
-        }
+        matches!(&self.tokens[self.current + 1].kind, 
+            TokenType::EQUAL | TokenType::COLON | TokenType::PLUS_EQUAL | 
+            TokenType::MINUS_EQUAL | TokenType::STAR_EQUAL | TokenType::FSLASH_EQUAL | 
+            TokenType::DOUBLE_FSLASH_EQUAL | TokenType::MODULO_EQUAL | TokenType::DOUBLE_STAR_EQUAL
+        )
     }
 
     fn consume(&mut self, kind: TokenType, message: &str) -> Result<Token<'p>, VyprError> {
@@ -697,6 +711,20 @@ impl<'p> Parser<'p> {
         } else {
             Err(self.make_error("P015", message))
         }
+    }
+
+     fn consume_statement_end(&mut self) -> Result<(), VyprError> {
+        if self.check(TokenType::SEMICOLON) {
+            self.advance();
+        }
+
+        if self.is_at_end() || self.check(TokenType::DEDENT) {
+            return Ok(());
+        }
+
+        self.consume(TokenType::NEWLINE, "expected newline after statement")?;
+
+        Ok(())
     }
 
     fn match_token(&mut self, kind: TokenType) -> bool {
