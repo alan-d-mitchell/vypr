@@ -10,6 +10,7 @@ pub struct Lexer<'l> {
     start_byte: usize,
     line: usize,
     column: usize,
+    pub errors: Vec<VyprError>,
 }
 
 impl<'l> Lexer<'l> {
@@ -24,18 +25,19 @@ impl<'l> Lexer<'l> {
             start_byte: 0,
             line: 1,
             column: 1,
+            errors: Vec::new(),
         }
     }
 
     fn error(&self, code: &'static str, message: impl Into<String>) -> VyprError {
         VyprError::new(code, message, Span {
             line: self.line,
-            column: self.column,
+            column: self.column.saturating_sub(1).max(1),
             length: 1,
         })
     }
 
-    pub fn tokenize(&mut self) -> Result<Vec<Token<'l>>, VyprError> {
+    pub fn tokenize(&mut self) -> Vec<Token<'l>> {
         let mut tokens = Vec::new();
         let mut indentations = vec![1];
         let mut line_begin = true;
@@ -72,7 +74,7 @@ impl<'l> Lexer<'l> {
                         }
 
                         if top < current_indent {
-                            return Err(self.error("L004", "unexpected indentation level"));
+                            self.errors.push(self.error("L004", "unexpected indentation level"));
                         }
                         indentations.pop();
                         
@@ -94,22 +96,27 @@ impl<'l> Lexer<'l> {
             self.start = self.current;
             self.start_byte = self.current_byte;
 
-            if let Some(kind) = self.scan_token()? {
-                if kind == TokenType::NEWLINE {
-                    line_begin = true;
+            match self.scan_token() {
+                Ok(Some(kind)) => {
+                    if kind == TokenType::NEWLINE {
+                        line_begin = true;
+                    }
+
+                    let lexeme = &self.input[self.start_offset()..self.current_offset()];
+
+                    tokens.push(Token {
+                        kind,
+                        lexeme,
+                        span: Span {
+                            line: self.line,
+                            column: self.column,
+                            length: lexeme.len().max(1)
+                        }
+                    });
                 }
 
-                let lexeme = &self.input[self.start_offset()..self.current_offset()];
-
-                tokens.push(Token {
-                    kind,
-                    lexeme,
-                    span: Span {
-                        line: self.line,
-                        column: self.column,
-                        length: lexeme.len().max(1)
-                    }
-                });
+                Ok(None) => {}
+                Err(e) => self.errors.push(e)
             }
         }
 
@@ -137,7 +144,7 @@ impl<'l> Lexer<'l> {
             }
         });
 
-        Ok(tokens)
+        tokens
     }
 
     fn scan_token(&mut self) -> Result<Option<TokenType>, VyprError> {

@@ -123,13 +123,15 @@ fn main() {
 
     // --- PHASE 1: LEXER ---
     let mut lexer = Lexer::new(&contents);
-    let tokens = match lexer.tokenize() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("[LEXER] {}", e);
-            process::exit(1);
+    let tokens = lexer.tokenize();
+
+    if !lexer.errors.is_empty() {
+        for error in &lexer.errors {
+            error.report(&contents, &input);
         }
-    };
+
+        process::exit(1);
+    }
 
     if emit_tokens {
         let output = tokens.iter()
@@ -144,13 +146,15 @@ fn main() {
 
     // --- PHASE 2: PARSER ---
     let mut parser = Parser::new(tokens);
-    let ast = match parser.parse() {
-        Ok(ast) => ast,
-        Err(e) => {
-            eprintln!("[PARSER] {}", e);
-            process::exit(1);
+    let ast = parser.parse();
+
+    if !parser.errors.is_empty() {
+        for error in &parser.errors {
+            error.report(&contents, &input);
         }
-    };
+
+        process::exit(1);
+    }
 
     if emit_ast {
         let output = ast.iter()

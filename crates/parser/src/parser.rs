@@ -1,3 +1,4 @@
+use error::error::VyprError;
 use lexer::token::{Token, TokenType};
 use crate::ast::{Param, TypeExpr};
 
@@ -6,6 +7,7 @@ use super::ast::{Stmt, Expr};
 pub struct Parser<'p> {
     tokens: Vec<Token<'p>>,
     current: usize,
+    pub errors: Vec<VyprError>,
 }
 
 impl<'p> Parser<'p> {
@@ -14,10 +16,22 @@ impl<'p> Parser<'p> {
         Self {
             tokens,
             current: 0,
+            errors: Vec::new(),
         }
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Stmt<'p>>, String> {
+    fn make_error(&self, code: &'static str, message: impl Into<String>) -> VyprError {
+        let token = self.peek();
+        let span = if token.kind == TokenType::EOF && self.current > 0 {
+            self.previous().span
+        } else {
+            token.span
+        };
+
+        VyprError::new(code, message, span)
+    }
+
+    pub fn parse(&mut self) -> Vec<Stmt<'p>> {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
@@ -25,13 +39,37 @@ impl<'p> Parser<'p> {
                 continue;
             }
 
-            statements.push(self.statement()?);
+            match self.statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.synchronize();
+                }
+            }
         }
 
-        Ok(statements)
+        statements
     }
 
-    fn statement(&mut self) -> Result<Stmt<'p>, String> {
+    fn synchronize(&mut self) {
+        self.advance();
+
+        while !self.is_at_end() {
+            if self.previous().kind == TokenType::NEWLINE || self.previous().kind == TokenType::SEMICOLON {
+                return;
+            }
+
+            match self.peek().kind {
+                TokenType::DEF | TokenType::IF | TokenType::FOR | 
+                TokenType::WHILE | TokenType::RETURN => return,
+                _ => {}
+            }
+
+            self.advance();
+        }
+    }
+
+    fn statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         if self.match_token(TokenType::DEF) {
             return self.function_declaration();
         }
@@ -62,7 +100,7 @@ impl<'p> Parser<'p> {
         self.expression_statement()
     }
 
-    fn parse_type_annotation(&mut self) -> Result<TypeExpr, String> {
+    fn parse_type_annotation(&mut self) -> Result<TypeExpr, VyprError> {
         let token = self.advance();
 
         let mut node = match token.kind {
@@ -76,14 +114,16 @@ impl<'p> Parser<'p> {
                     let inner = self.parse_type_annotation()?;
 
                     if !self.match_token(TokenType::RBRACKET) {
-                        return Err("expected ']' after list type".to_string());
+                        return Err(self.make_error("P001", "expected ']' after list type"))
                     }
+
                     TypeExpr::List(Box::new(inner))
                 } else {
                     TypeExpr::Atomic(TokenType::LIST)
                 }
             }
-            _ => return Err(format!("expected type, found {:?}", token.lexeme)),
+
+            _ => return Err(self.make_error("P002", format!("expected type, found {:?}", token.lexeme))),
         };
 
         if self.match_token(TokenType::PIPE) {
@@ -94,7 +134,7 @@ impl<'p> Parser<'p> {
         Ok(node)
     }
     
-    fn if_statement(&mut self) -> Result<Stmt<'p>, String> {
+    fn if_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         self.consume(TokenType::IF, "expected 'if'")?;
         let condition = self.expression()?;
         self.consume(TokenType::COLON, "expected ':' after if condtion")?;
@@ -119,7 +159,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn if_statement_inner(&mut self) -> Result<Stmt<'p>, String> {
+    fn if_statement_inner(&mut self) -> Result<Stmt<'p>, VyprError> {
         let condition = self.expression()?;
         self.consume(TokenType::COLON, "expected ':'")?;
         let then = self.block()?;
@@ -143,7 +183,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn for_statement(&mut self) -> Result<Stmt<'p>, String> {
+    fn for_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         self.consume(TokenType::FOR, "expected 'for'")?;
         let token = self.advance();
 
@@ -156,7 +196,7 @@ impl<'p> Parser<'p> {
             TokenType::BOOL => "bool".to_string(),
             TokenType::LIST => "list".to_string(),
 
-            _ => return Err("expected variable name after 'for'".to_string())
+            _ => return Err(self.make_error("P003", "expected variable name after 'for'"))
         };
 
         self.consume(TokenType::IN, "expected 'in' after variable")?;
@@ -172,7 +212,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn while_statement(&mut self) -> Result<Stmt<'p>, String> {
+    fn while_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         self.consume(TokenType::WHILE, "expected 'while'")?;
         let condition = self.expression()?;
         self.consume(TokenType::COLON, "expected ':' after while condition")?;
@@ -185,7 +225,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn return_statement(&mut self) -> Result<Stmt<'p>, String> {
+    fn return_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         let keyword = self.previous();
         let mut value = None;
 
@@ -201,7 +241,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn expression_statement(&mut self) -> Result<Stmt<'p>, String> {
+    fn expression_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
         let expr = self.expression()?;
 
         if self.check(TokenType::SEMICOLON) {
@@ -214,7 +254,7 @@ impl<'p> Parser<'p> {
     }
 
 
-    fn var_declaration(&mut self, name: String) -> Result<Stmt<'p>, String> {
+    fn var_declaration(&mut self, name: String) -> Result<Stmt<'p>, VyprError> {
         let mut annotation = None;
 
         if self.match_token(TokenType::COLON) {
@@ -260,7 +300,6 @@ impl<'p> Parser<'p> {
             self.match_token(TokenType::NEWLINE);
         }
 
-
         Ok(Stmt::VarDecl {
             name,
             value,
@@ -268,7 +307,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn list_literal(&mut self) -> Result<Expr, String> {
+    fn list_literal(&mut self) -> Result<Expr, VyprError> {
         let mut elements = Vec::new();
 
         if !self.check(TokenType::RBRACKET) {
@@ -282,20 +321,20 @@ impl<'p> Parser<'p> {
         }
 
         if !self.match_token(TokenType::RBRACKET) {
-            return Err("expected ']' after list elements".to_string())
+            return Err(self.make_error("P004", "expected ']' after list elements"))
         }
 
         Ok(Expr::List(elements))
     }
     
-    fn function_declaration(&mut self) -> Result<Stmt<'p>, String> {
+    fn function_declaration(&mut self) -> Result<Stmt<'p>, VyprError> {
         let name = match self.advance().kind {
             TokenType::IDENTIFIER(s) => s,
-            _ => return Err("expected function name".to_string())
+            _ => return Err(self.make_error("P005", "expected function name"))
         };
 
         if !self.match_token(TokenType::LPAREN) {
-            return Err("expected '(' after function name".to_string());
+            return Err(self.make_error("P006", "expected '(' after function name"));
         }
 
         let mut params = Vec::new();
@@ -303,7 +342,7 @@ impl<'p> Parser<'p> {
             loop {
                 let param_name = match self.advance().kind {
                     TokenType::IDENTIFIER(s) => s,
-                    _ => return Err("expected parameter name".to_string())
+                    _ => return Err(self.make_error("P007", "expected parameter name"))
                 };
 
                 let mut annotation = None;
@@ -323,7 +362,7 @@ impl<'p> Parser<'p> {
         }
 
         if !self.match_token(TokenType::RPAREN) {
-            return Err("expected ')' after parameters".to_string());
+            return Err(self.make_error("P008", "expected ')' after parameters"));
         }
 
         let mut return_type = None;
@@ -332,11 +371,11 @@ impl<'p> Parser<'p> {
         }
 
         if !self.match_token(TokenType::COLON) {
-            return Err("expected ':' before function body".to_string());
+            return Err(self.make_error("P009", "expected ':' before function body"));
         }
 
         if !self.match_token(TokenType::NEWLINE) {
-            return Err("expected newline before function body".to_string());
+            return Err(self.make_error("P010", "expected newline before function body"));
         }
 
         let body = self.block()?;
@@ -349,7 +388,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn block(&mut self) -> Result<Vec<Stmt<'p>>, String> {
+    fn block(&mut self) -> Result<Vec<Stmt<'p>>, VyprError> {
         if self.match_token(TokenType::NEWLINE) {
         }
 
@@ -365,17 +404,17 @@ impl<'p> Parser<'p> {
         }
 
         if !self.match_token(TokenType::DEDENT) {
-            return Err("expected dedent at end of block".to_string());
+            return Err(self.make_error("P011", "expected dedent at end of block"));
         }
 
         Ok(statements)
     }
 
-    pub fn expression(&mut self) -> Result<Expr, String> {
+    pub fn expression(&mut self) -> Result<Expr, VyprError> {
         self.logic_or()
     }
 
-    fn logic_or(&mut self) -> Result<Expr, String> {
+    fn logic_or(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.logic_and()?;
 
         while self.match_token(TokenType::OR) {
@@ -392,7 +431,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn logic_and(&mut self) -> Result<Expr, String> {
+    fn logic_and(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.equality()?;
 
         while self.match_token(TokenType::AND) {
@@ -409,7 +448,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn equality(&mut self) -> Result<Expr, String> {
+    fn equality(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.comparison()?;
 
         while self.match_token(TokenType::DOUBLE_EQUAL) {
@@ -426,7 +465,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn comparison(&mut self) -> Result<Expr, String> {
+    fn comparison(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.term()?;
 
         while self.match_tokens(&[TokenType::LESS_THAN, TokenType::GREATER_THAN, 
@@ -445,7 +484,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn term(&mut self) -> Result<Expr, String> {
+    fn term(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.factor()?;
 
         while self.match_tokens(&[TokenType::PLUS, TokenType::MINUS]) {
@@ -462,7 +501,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn factor(&mut self) -> Result<Expr, String> {
+    fn factor(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.unary()?;
 
         while self.match_tokens(&[
@@ -484,7 +523,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn unary(&mut self) -> Result<Expr, String> {
+    fn unary(&mut self) -> Result<Expr, VyprError> {
         if self.match_tokens(&[TokenType::MINUS, TokenType::NOT]) {
             let operator = self.previous().kind;
             let right = self.unary()?; // Recursive for --5
@@ -498,7 +537,7 @@ impl<'p> Parser<'p> {
         self.power()
     }
 
-    fn power(&mut self) -> Result<Expr, String> {
+    fn power(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.call()?;
 
         if self.match_token(TokenType::DOUBLE_STAR) {
@@ -515,7 +554,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn call(&mut self) -> Result<Expr, String> {
+    fn call(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.primary()?;
 
         loop {
@@ -533,7 +572,7 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
-    fn primary(&mut self) -> Result<Expr, String> {
+    fn primary(&mut self) -> Result<Expr, VyprError> {
         let token = self.advance();
 
         match token.kind {
@@ -556,13 +595,13 @@ impl<'p> Parser<'p> {
                 let expr = self.expression()?;
 
                 if !self.match_token(TokenType::RPAREN) {
-                    return Err("expected ')' after expression.".to_string());
+                    return Err(self.make_error("P012", "expected ')' after expression."));
                 }
 
                 Ok(Expr::Grouping(Box::new(expr)))
             }
 
-            _ => Err(format!("expected expression, found {:?}", token.lexeme)),
+            _ => Err(self.make_error("P013", format!("expected expression, found {:?}", token.lexeme))),
         }
     }
 
@@ -577,7 +616,7 @@ impl<'p> Parser<'p> {
         false
     }
 
-    fn finish_call(&mut self, callee: Expr) -> Result<Expr, String> {
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, VyprError> {
         let mut args = Vec::new();
 
         if !self.check(TokenType::RPAREN) {
@@ -598,10 +637,10 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn finish_method_call(&mut self, callee: Expr) -> Result<Expr, String> {
+    fn finish_method_call(&mut self, callee: Expr) -> Result<Expr, VyprError> {
         let method_name = match self.advance().kind {
             TokenType::IDENTIFIER(name) => name,
-            _ => return Err("expected method name after '.'".to_string()),
+            _ => return Err(self.make_error("P014", "expected method name after '.'")),
         };
 
         self.consume(TokenType::LPAREN, "expected '(' after method name")?;
@@ -625,7 +664,7 @@ impl<'p> Parser<'p> {
         })
     }
 
-    fn finish_subscript(&mut self, callee: Expr) -> Result<Expr, String> {
+    fn finish_subscript(&mut self, callee: Expr) -> Result<Expr, VyprError> {
         let index = self.expression()?;
 
         self.consume(TokenType::RBRACKET, "expected ']' after subscript")?;
@@ -652,11 +691,11 @@ impl<'p> Parser<'p> {
         }
     }
 
-    fn consume(&mut self, kind: TokenType, message: &str) -> Result<Token<'p>, String> {
+    fn consume(&mut self, kind: TokenType, message: &str) -> Result<Token<'p>, VyprError> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
-            Err(message.to_string())
+            Err(self.make_error("P015", message))
         }
     }
 
