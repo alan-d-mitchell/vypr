@@ -1,4 +1,6 @@
 use std::fmt;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use crate::bytecode::Chunk;
 
@@ -9,6 +11,7 @@ pub enum DataType {
     Str,
     Bool,
     List,
+    Range,
     None,
     Function,
     Any,
@@ -22,7 +25,8 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     Str(String),
-    List(Vec<Value>),
+    List(Rc<RefCell<Vec<Value>>>),
+    Range(i64, i64),
     None,
     Native(NativeFn),
     Function(Box<Chunk>),
@@ -39,6 +43,7 @@ impl Value {
             Value::List(_) => DataType::List,
             Value::None => DataType::None,
             Value::Native(_) | Value::Function(_) => DataType::Function,
+            Value::Range(_, _) => DataType::Range,
         }
     }
 
@@ -49,6 +54,7 @@ impl Value {
             Value::Int(i) => *i != 0,
             Value::Float(f) => *f != 0.0,
             Value::Str(s) => !s.is_empty(),
+            Value::Range(start, stop) => start > stop,
             _ => true,
         }
     }
@@ -64,15 +70,16 @@ impl fmt::Display for Value {
             Value::List(items) => {
                 write!(f, "[")?;
 
-                for (i, item) in items.iter().enumerate() {
+                for (i, item) in items.borrow().iter().enumerate() {
                     if i > 0 {
-                        write!(f, "{}", item)?;
+                        write!(f, ", ")?;
                     }
-                    write!(f, "]")?;
+                    write!(f, "{}", item)?;
                 }
 
-                Ok(())
+                Ok(write!(f, "]")?)
             }
+            Value::Range(start, stop) => write!(f, "range({}, {})", start, stop),
             Value::None => write!(f, "None"),
             Value::Native(_) => write!(f, "<native fn>"),
             Value::Function(_) => write!(f, "<fn>"),

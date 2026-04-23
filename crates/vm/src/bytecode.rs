@@ -32,6 +32,7 @@ pub enum OpCode {
     Length,
 
     Call(usize),
+    Invoke(usize, usize),   
     Return,
 }
 

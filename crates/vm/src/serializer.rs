@@ -69,6 +69,7 @@ impl Serializer {
             DataType::None     => buf.push(0x05),
             DataType::Function => buf.push(0x06),
             DataType::List     => buf.push(0x07),
+            DataType::Range    => buf.push(0x08),
         }
     }
 
@@ -94,12 +95,18 @@ impl Serializer {
             }
             Value::List(items) => {
                 self.file.write_all(&[0x07])?; // tag
-                let len = items.len() as u32;
+                let borrowed = items.borrow();
+                let len = borrowed.len() as u32;
                 self.file.write_all(&len.to_be_bytes())?;
 
-                for item in items {
+                for item in borrowed.iter() {
                     self.write_value(item)?;
                 }
+            }
+            Value::Range(start, stop) => {
+                self.file.write_all(&[0x08])?;
+                self.file.write_all(&start.to_le_bytes())?;
+                self.file.write_all(&stop.to_le_bytes())?;
             }
             Value::None => {
                 self.file.write_all(&[0x05])?;
@@ -184,6 +191,11 @@ impl Serializer {
             OpCode::Loop(offset) => {
                 buf.push(0x15);
                 buf.extend_from_slice(&(*offset as u32).to_be_bytes());
+            }
+            OpCode::Invoke(name_idx, args) => {
+                buf.push(0x1E); // Next available hex tag
+                buf.extend_from_slice(&(*name_idx as u32).to_be_bytes());
+                buf.push(*args as u8);
             }
         }
     }

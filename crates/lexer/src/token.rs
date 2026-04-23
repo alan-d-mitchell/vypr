@@ -23,6 +23,7 @@ pub enum TokenType {
     BOOL,
     STR,
     LIST,
+    RANGE,
 
     // LOGICAL
     AND,

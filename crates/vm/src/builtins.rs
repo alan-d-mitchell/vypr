@@ -1,5 +1,5 @@
 use crate::value::Value;
-use std::arch::asm;
+use std::{arch::asm, cell::RefCell, rc::Rc};
 
 pub fn vypr_print(args: &[Value]) -> Value {
     for (i, arg) in args.iter().enumerate() {
@@ -70,9 +70,61 @@ pub fn vypr_len(args: &[Value]) -> Value {
     }
 
     match &args[0] {
-        Value::List(items) => Value::Int(items.len() as i64),
+        Value::List(items) => Value::Int(items.borrow().len() as i64),
         Value::Str(s) => Value::Int(s.len() as i64),
         _ => Value::None
+    }
+}
+
+pub fn vypr_range(args: &[Value]) -> Value {
+    let mut start = 0;
+    let mut stop = 0;
+
+    if args.len() == 1 {
+        if let Value::Int(s) = args[0] {
+            stop = s;
+        }
+    } else if args.len() >= 2 {
+        if let Value::Int(s) = args[0] {
+            start = s;
+        }
+
+        if let Value::Int(s) = args[1] {
+            stop = s;
+        }
+    }
+
+    Value::Range(start, stop)
+}
+
+pub fn vypr_list(args: &[Value]) -> Value {
+    if args.is_empty() {
+        return Value::List(Rc::new(RefCell::new(Vec::new()))); // list() returns empty list
+    }
+
+    match &args[0] {
+        Value::List(items) => Value::List(Rc::new(RefCell::new(items.borrow().clone()))),
+
+        Value::Str(s) => {
+            let mut chars = Vec::new();
+            for c in s.chars() {
+                chars.push(Value::Str(c.to_string()));
+            }
+            // Wrap the raw Vec in Rc and RefCell
+            Value::List(Rc::new(RefCell::new(chars)))
+        }
+
+        Value::Range(start, stop) => {
+            let mut items = Vec::new();
+
+            for i in *start..*stop {
+                items.push(Value::Int(i));
+            }
+
+            // Wrap the raw Vec in Rc and RefCell
+            Value::List(Rc::new(RefCell::new(items)))
+        } 
+        _ => Value::None, 
     }
 }
 

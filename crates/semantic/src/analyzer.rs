@@ -40,6 +40,17 @@ impl Analyzer {
             return_type: TypeExpr::Atomic(TokenType::INT) 
         }, true);
 
+        // range(any) -> list[int]
+        global_scope.define("range".to_string(), SymbolType::Function { 
+            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            return_type: TypeExpr::Atomic(TokenType::RANGE) 
+        }, true);
+
+        global_scope.define("list".to_string(), SymbolType::Function { 
+            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            return_type: TypeExpr::Atomic(TokenType::LIST) 
+        }, true);
+
         Self {
             scopes: vec![global_scope], // Start with global scope
             current_return_type: None,
@@ -136,6 +147,7 @@ impl Analyzer {
                 let item_type = match iter_type {
                     TypeExpr::List(inner) => *inner,
                     TypeExpr::Atomic(TokenType::STR) => TypeExpr::Atomic(TokenType::STR),
+                    TypeExpr::Atomic(TokenType::RANGE) => TypeExpr::Atomic(TokenType::INT),
                     TypeExpr::Atomic(TokenType::LIST) => TypeExpr::Atomic(TokenType::NONE),
                     TypeExpr::Atomic(TokenType::NONE) => TypeExpr::Atomic(TokenType::NONE),
 
@@ -252,6 +264,31 @@ impl Analyzer {
                 }
             },
 
+            Expr::MethodCall { callee, args, method } => {
+                let callee_type = self.infer_type(callee)?;
+
+                match (callee_type, method.as_str()) {
+                    (TypeExpr::List(inner_type), "append") => { // check if they are calling .append() on a List
+                        if args.len() != 1 {
+                            return Err("append() takes exactly 1 argument".to_string());
+                        }
+
+                        let arg_type = self.infer_type(&args[0])?;
+                        
+                        if !self.types_match(&inner_type, &arg_type) {
+                            return Err(format!(
+                                "type error: cannot append {:?} to list[{:?}]", 
+                                arg_type, inner_type
+                            ));
+                        }
+
+                        Ok(TypeExpr::Atomic(TokenType::NONE))
+                    }
+
+                    (t, m) => Err(format!("type {:?} has no method '{}'", t, m))
+                }
+            },
+
             Expr::Binary { left, operator, right } => {
                 let left_type = self.infer_type(left)?;
                 let _right_type = self.infer_type(right)?;
@@ -301,6 +338,27 @@ impl Analyzer {
                 }
             }
 
+            Expr::List(elements) => {
+                if elements.is_empty() {
+                    Ok(TypeExpr::Atomic(TokenType::LIST))
+                } else {
+                    let element_type = self.infer_type(&elements[0])?;
+
+                    for (i, element) in elements.iter().skip(1).enumerate() {
+                        let current_type = self.infer_type(element)?;
+
+                        if !self.types_match(&element_type, &current_type) {
+                            return Err(format!(
+                                "type error: element at index {} has type {:?}, but expected {:?}",
+                                i + 1, current_type, element_type
+                            ));
+                        }
+                    }
+
+                    Ok(TypeExpr::List(Box::new(element_type)))
+                }
+            }
+
             Expr::Grouping(inner) => self.infer_type(inner),
 
             _ => Ok(TypeExpr::Atomic(TokenType::NONE))
@@ -338,6 +396,13 @@ impl Analyzer {
             (TypeExpr::Atomic(t1), TypeExpr::Atomic(t2)) => t1 == t2,
             (TypeExpr::Atomic(TokenType::NONE), _) => true, // 'Any' matches anything
             (_, TypeExpr::Atomic(TokenType::NONE)) => true, 
+
+            (TypeExpr::List(inner_expected), TypeExpr::List(inner_actual)) => {
+                self.types_match(inner_expected, inner_actual)
+            }
+
+            (TypeExpr::Atomic(TokenType::LIST), TypeExpr::List(_)) => true,
+            (TypeExpr::List(_), TypeExpr::Atomic(TokenType::LIST)) => true,
 
             _ => false,
         }

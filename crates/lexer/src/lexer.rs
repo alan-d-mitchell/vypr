@@ -356,6 +356,7 @@ impl<'l> Lexer<'l> {
             "bool" => TokenType::BOOL,
             "str" => TokenType::STR,
             "list" => TokenType::LIST,
+            "range" => TokenType::RANGE,
 
             // KEYWORDS
             "def" => TokenType::DEF,
@@ -420,7 +421,7 @@ impl<'l> Lexer<'l> {
             }
         }
 
-        Err("unterminate multiline comment".to_string())
+        Err("unterminated multiline comment".to_string())
     }
 
     fn skip_whitespace(&mut self) {

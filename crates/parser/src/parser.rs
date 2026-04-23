@@ -518,6 +518,8 @@ impl<'p> Parser<'p> {
                 expr = self.finish_call(expr)?;
             } else if self.match_token(TokenType::LBRACKET) {
                 expr = self.finish_subscript(expr)?;
+            } else if self.match_token(TokenType::PERIOD) {
+                expr = self.finish_method_call(expr)?;
             } else {
                 break;
             }
@@ -541,6 +543,7 @@ impl<'p> Parser<'p> {
             TokenType::STR => Ok(Expr::Variable("str".to_string())),
             TokenType::BOOL => Ok(Expr::Variable("bool".to_string())),
             TokenType::LIST => Ok(Expr::Variable("list".to_string())),
+            TokenType::RANGE => Ok(Expr::Variable("range".to_string())),
 
             TokenType::LBRACKET => self.list_literal(),
             
@@ -586,6 +589,33 @@ impl<'p> Parser<'p> {
 
         Ok(Expr::Call {
             callee: Box::new(callee),
+            args,
+        })
+    }
+
+    fn finish_method_call(&mut self, callee: Expr) -> Result<Expr, String> {
+        let method_name = match self.advance().kind {
+            TokenType::IDENTIFIER(name) => name,
+            _ => return Err("expected method name after '.'".to_string()),
+        };
+
+        self.consume(TokenType::LPAREN, "expected '(' after method name")?;
+
+        let mut args = Vec::new();
+        if !self.check(TokenType::RPAREN) {
+            loop {
+                args.push(self.expression()?); // Parse each argument
+                if !self.match_token(TokenType::COMMA) { 
+                    break; 
+                }
+            }
+        }
+
+        self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
+
+        Ok(Expr::MethodCall {
+            callee: Box::new(callee),
+            method: method_name,
             args,
         })
     }

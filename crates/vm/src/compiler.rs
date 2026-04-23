@@ -124,6 +124,13 @@ impl Compiler {
                 self.add_local("".to_string());
                 let index_slot = self.locals.len() - 1;
 
+                if self.resolve_local(&var).is_none() {
+                    self.add_local(var.clone());
+                    self.emit_constant(Value::None);
+                }
+
+                let var_idx = self.resolve_local(&var).unwrap();
+
                 let loop_start = self.chunk.code.len();
 
                 self.chunk.write(OpCode::GetLocal(index_slot)); // Index
@@ -134,18 +141,10 @@ impl Compiler {
                 let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
                 self.chunk.write(OpCode::Pop);
 
-                if self.resolve_local(&var).is_none() {
-                    self.add_local(var.clone());
-                    self.emit_constant(Value::None);
-                }
-
-                let var_idx = self.resolve_local(&var).unwrap();
-
                 self.chunk.write(OpCode::GetLocal(list_slot)); // List
                 self.chunk.write(OpCode::GetLocal(index_slot)); // Index
                 self.chunk.write(OpCode::GetSubscript);
                 self.chunk.write(OpCode::SetLocal(var_idx));
-                self.chunk.write(OpCode::Pop);
 
                 for s in body {
                     self.compile_stmt(s)?;
@@ -155,16 +154,12 @@ impl Compiler {
                 self.emit_constant(Value::Int(1));
                 self.chunk.write(OpCode::Add);
                 self.chunk.write(OpCode::SetLocal(index_slot));
-                self.chunk.write(OpCode::Pop);
 
                 self.emit_loop(loop_start)?;
 
                 self.patch_jump(exit_jump)?;
                 self.chunk.write(OpCode::Pop);
 
-                self.chunk.write(OpCode::Pop); // Pop Index
-                self.chunk.write(OpCode::Pop); // Pop List
-                
                 self.exit_scope();
             }
 
@@ -329,6 +324,19 @@ impl Compiler {
                 }
 
                 self.chunk.write(OpCode::Call(args.len()));
+            }
+
+            Expr::MethodCall { callee, args, method } => {
+                self.compile_expr(*callee)?;
+                
+                // 2. Push the arguments
+                for arg in &args {
+                    self.compile_expr(arg.clone())?;
+                }
+
+                // 3. Emit the Invoke instruction
+                let name_idx = self.make_constant(Value::Str(method.clone()));
+                self.chunk.write(OpCode::Invoke(name_idx, args.len()));
             }
 
             Expr::Subscript { callee, index } => {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use crate::{bytecode::{Chunk, OpCode}, value::{Value, DataType}};
 
 #[derive(Clone)]
@@ -51,6 +51,16 @@ impl VM {
 
         globals.insert("len".to_string(), GlobalVar {
             value: Value::Native(crate::builtins::vypr_len),
+            lock: DataType::Function,
+        });
+
+        globals.insert("range".to_string(), GlobalVar {
+            value: Value::Native(crate::builtins::vypr_range),
+            lock: DataType::Function,
+        });
+
+        globals.insert("list".to_string(), GlobalVar {
+            value: Value::Native(crate::builtins::vypr_list),
             lock: DataType::Function,
         });
 
@@ -150,6 +160,36 @@ impl VM {
                     self.call_value(arg_count)?;
                 }
 
+                OpCode::Invoke(name_idx, arg_count) => {
+                    let method_name = self.read_string(name_idx)?;
+
+                    // Pop arguments off the stack (reverse order)
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.pop()?);
+                    }
+                    args.reverse();
+
+                    // Pop the parent object (the list) off the stack
+                    let obj = self.pop()?;
+
+                    match (obj, method_name.as_str()) {
+                        (Value::List(items), "append") => {
+                            if args.len() != 1 {
+                                return Err(VMError::RuntimeError("append() takes exactly 1 argument".to_string()));
+                            }
+                            
+                            items.borrow_mut().push(args[0].clone());
+                            
+                            self.push(Value::None);
+                        }
+                        
+                        (val, method) => {
+                            return Err(VMError::RuntimeError(format!("object '{:?}' has no method '{}'", val.get_type() , method)));
+                        }
+                    }
+                }
+
                 OpCode::GetSubscript => {
                     let index_val = self.pop()?;
                     let list_val = self.pop()?;
@@ -161,17 +201,19 @@ impl VM {
 
                     match list_val {
                         Value::List(items) => {
+                            let borrowed = items.borrow();
+
                             let effective_index = if index < 0 {
-                                items.len() as i64 + index
+                                borrowed.len() as i64 + index
                             } else {
                                 index
                             };
 
-                            if effective_index < 0 || effective_index >= items.len() as i64 {
+                            if effective_index < 0 || effective_index >= borrowed.len() as i64 {
                                 return Err(VMError::RuntimeError("list index out of range".to_string()));
                             }
 
-                            self.push(items[effective_index as usize].clone());
+                            self.push(borrowed[effective_index as usize].clone());
                         }
 
                         Value::Str(s) => {
@@ -194,6 +236,17 @@ impl VM {
                             }
                         }
 
+                        Value::Range(start, stop) => {
+                            let len = if stop > start { stop - start } else { 0 };
+                            let effective_index = if index < 0 { len + index } else { index };
+
+                            if effective_index < 0 || effective_index >= len {
+                                return Err(VMError::RuntimeError("range object index out of range".to_string()));
+                            }
+
+                            self.push(Value::Int(start + effective_index));
+                        }
+
                         _ => return Err(VMError::RuntimeError("object is not subscriptable".to_string()))
                     }
                 }
@@ -209,14 +262,20 @@ impl VM {
                     // Restore original order
                     items.reverse();
                     
-                    self.push(Value::List(items));
+                    self.push(Value::List(Rc::new(RefCell::new(items))));
                 }
 
                 OpCode::Length => {
                     let val = self.pop()?;
                     match val {
-                        Value::List(items) => self.push(Value::Int(items.len() as i64)),
+                        Value::List(items) => self.push(Value::Int(items.borrow().len() as i64)),
                         Value::Str(s) => self.push(Value::Int(s.chars().count() as i64)),
+
+                        Value::Range(start, stop) => {
+                            let len = if stop > start { stop - start } else { 0 };
+                            self.push(Value::Int(len));
+                        }
+
                         _ => return Err(VMError::RuntimeError("object has no length".to_string())),
                     }
                 }

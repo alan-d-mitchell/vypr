@@ -80,4 +80,10 @@ pub enum Expr {
         operator: TokenType,
         right: Box<Expr>
     },
+
+    MethodCall {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        method: String,
+    }
 }
