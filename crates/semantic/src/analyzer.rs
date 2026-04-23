@@ -1,6 +1,7 @@
 use crate::scope::{Scope, SymbolType};
-use parser::ast::{Stmt, Expr, TypeExpr};
+use parser::ast::{Expr, ExprKind, Stmt, StmtKind, TypeExpr};
 use lexer::token::TokenType;
+use error::error::{Span, VyprError};
 
 pub struct Analyzer {
     scopes: Vec<Scope>, // Stack of scopes. Index 0 is global.
@@ -13,41 +14,41 @@ impl Analyzer {
         let mut global_scope = Scope::new();
 
         global_scope.define("int".to_string(), SymbolType::Function { 
-            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::INT) 
         }, true);
         
         // float(any) -> float
         global_scope.define("float".to_string(), SymbolType::Function { 
-            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::FLOAT) 
         }, true);
 
         // str(any) -> str
         global_scope.define("str".to_string(), SymbolType::Function { 
-            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::STR) 
         }, true);
         
         // print(any) -> None (Actually variadic, but treating as 1 arg of Any for simple checking)
         global_scope.define("print".to_string(), SymbolType::Function { 
-            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
-            return_type: TypeExpr::Atomic(TokenType::NONE) 
+            params: vec![TypeExpr::Any], 
+            return_type: TypeExpr::Any 
         }, true);
 
         global_scope.define("len".to_string(), SymbolType::Function { 
-            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::INT) 
         }, true);
 
         // range(any) -> list[int]
         global_scope.define("range".to_string(), SymbolType::Function { 
-            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::RANGE) 
         }, true);
 
         global_scope.define("list".to_string(), SymbolType::Function { 
-            params: vec![TypeExpr::Atomic(TokenType::NONE)], 
+            params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::LIST) 
         }, true);
 
@@ -57,7 +58,11 @@ impl Analyzer {
         }
     }
 
-    pub fn analyze(&mut self, ast: &[Stmt]) -> Result<(), String> {
+    fn error(&self, code: &'static str, message: impl Into<String>, span: Span) -> VyprError {
+        VyprError::new(code, message, span)
+    }
+
+    pub fn analyze(&mut self, ast: &[Stmt]) -> Result<(), VyprError> {
         for stmt in ast {
             self.visit_stmt(stmt)?;
         }
@@ -65,21 +70,23 @@ impl Analyzer {
         Ok(())
     }
     
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
-        match stmt {
-            Stmt::VarDecl { name, value, annotation } => {
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<(), VyprError> {
+        let span = stmt.span;
+
+        match &stmt.kind {
+            StmtKind::VarDecl { name, value, annotation } => {
                 let value_type = if let Some(expr) = value {
                     self.infer_type(expr)?
                 } else {
-                    TypeExpr::Atomic(TokenType::NONE)
+                    TypeExpr::Any
                 };
 
                 if let Some(ann) = annotation {
                     if !self.types_match(ann, &value_type) {
-                        return Err(format!(
-                            "type error: variable '{}' declared as {:?} but assigned value of type {:?}",
+                        return Err(self.error("S001", format!(
+                            "type error: variable '{}' declared as {} but assigned value of type {}",
                             name, ann, value_type
-                        ));
+                        ), span));
                     }
 
                     self.define(name.clone(), SymbolType::Locked(ann.clone()), true);
@@ -88,12 +95,12 @@ impl Analyzer {
                 }
             }
 
-            Stmt::FuncDecl { name, params, body, return_type } => {
+            StmtKind::FuncDecl { name, params, body, return_type } => {
                 let param_types: Vec<TypeExpr> = params.iter()
-                    .map(|p| p.annotation.clone().unwrap_or(TypeExpr::Atomic(TokenType::NONE)))
+                    .map(|p| p.annotation.clone().unwrap_or(TypeExpr::Any))
                     .collect();
 
-                let ret_type = return_type.clone().unwrap_or(TypeExpr::Atomic(TokenType::NONE));
+                let ret_type = return_type.clone().unwrap_or(TypeExpr::Any);
 
                 self.define(name.clone(), SymbolType::Function {
                     params: param_types,
@@ -103,7 +110,7 @@ impl Analyzer {
                 self.enter_scope();
 
                 for param in params {
-                    let param_type = param.annotation.clone().unwrap_or(TypeExpr::Atomic(TokenType::NONE));
+                    let param_type = param.annotation.clone().unwrap_or(TypeExpr::Any);
 
                     self.define(
                         param.name.clone(),
@@ -123,7 +130,7 @@ impl Analyzer {
                 self.exit_scope();
             }
 
-            Stmt::If { condition, then, else_b } => {
+            StmtKind::If { condition, then, else_b } => {
                 self.visit_expr(condition)?;
 
                 self.enter_scope();
@@ -141,17 +148,17 @@ impl Analyzer {
                 }
             }
 
-            Stmt::For { var, iterator, body } => {
+            StmtKind::For { var, iterator, body } => {
                 let iter_type = self.infer_type(iterator)?;
 
                 let item_type = match iter_type {
                     TypeExpr::List(inner) => *inner,
                     TypeExpr::Atomic(TokenType::STR) => TypeExpr::Atomic(TokenType::STR),
                     TypeExpr::Atomic(TokenType::RANGE) => TypeExpr::Atomic(TokenType::INT),
-                    TypeExpr::Atomic(TokenType::LIST) => TypeExpr::Atomic(TokenType::NONE),
-                    TypeExpr::Atomic(TokenType::NONE) => TypeExpr::Atomic(TokenType::NONE),
+                    TypeExpr::Atomic(TokenType::LIST) => TypeExpr::Any,
+                    TypeExpr::Any => TypeExpr::Any,
 
-                    _ => return Err(format!("type error: type {:?} is not iterable", iter_type))
+                    _ => return Err(self.error("S002", format!("type error: type {} is not iterable", iter_type), span))
                 };
 
                 self.enter_scope();
@@ -164,7 +171,7 @@ impl Analyzer {
                 self.exit_scope();
             }
 
-            Stmt::While { condition, body } => {
+            StmtKind::While { condition, body } => {
                 self.visit_expr(condition)?;
 
                 self.enter_scope();
@@ -174,11 +181,11 @@ impl Analyzer {
                 self.exit_scope();
             }
 
-            Stmt::ExprStmt(expr) => {
+            StmtKind::ExprStmt(expr) => {
                 self.visit_expr(expr)?;
             }
 
-            Stmt::Return { value, .. } => {
+            StmtKind::Return { value, .. } => {
                 let actual_type = if let Some(expr) = value {
                     self.infer_type(expr)?
                 } else {
@@ -187,59 +194,65 @@ impl Analyzer {
 
                 if let Some(expected) = &self.current_return_type {
                     if !self.types_match(expected, &actual_type) {
-                        return Err(format!(
-                            "type error: function expected return type {:?} but got {:?}",
+                        return Err(self.error("S003", format!(
+                            "type error: function expected return type {} but got {}",
                             expected, actual_type
-                        ));
+                        ), span));
                     }
                 }
+            }
+
+            StmtKind::Pass => {
+                return Ok(())
             }
         }
 
         Ok(())
     }
 
-    fn visit_expr(&self, expr: &Expr) -> Result<(), String> {
+    fn visit_expr(&self, expr: &Expr) -> Result<(), VyprError> {
         self.infer_type(expr)?;
         Ok(())
     }
 
-    fn infer_type(&self, expr: &Expr) -> Result<TypeExpr, String> {
-        match expr {
-            Expr::Literal(TokenType::INT_LITERAL(_)) => Ok(TypeExpr::Atomic(TokenType::INT)),
-            Expr::Literal(TokenType::FLOAT_LITERAL(_)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
-            Expr::Literal(TokenType::STR_LITERAL(_)) => Ok(TypeExpr::Atomic(TokenType::STR)),
-            Expr::Literal(TokenType::TRUE) | Expr::Literal(TokenType::FALSE) => Ok(TypeExpr::Atomic(TokenType::BOOL)),
+    fn infer_type(&self, expr: &Expr) -> Result<TypeExpr, VyprError> {
+        let span = expr.span;
 
-            Expr::Variable(name) => {
+        match &expr.kind {
+            ExprKind::Literal(TokenType::INT_LITERAL(_)) => Ok(TypeExpr::Atomic(TokenType::INT)),
+            ExprKind::Literal(TokenType::FLOAT_LITERAL(_)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
+            ExprKind::Literal(TokenType::STR_LITERAL(_)) => Ok(TypeExpr::Atomic(TokenType::STR)),
+            ExprKind::Literal(TokenType::TRUE) | ExprKind::Literal(TokenType::FALSE) => Ok(TypeExpr::Atomic(TokenType::BOOL)),
+
+            ExprKind::Variable(name) => {
                 if let Some(sym) = self.resolve(name) {
                     match &sym.kind {
                         SymbolType::Locked(t) => Ok(t.clone()),
-                        SymbolType::Dynamic => Ok(TypeExpr::Atomic(TokenType::NONE)), // Unknown type
-                        SymbolType::Function { .. } => Ok(TypeExpr::Atomic(TokenType::NONE)),
+                        SymbolType::Dynamic => Ok(TypeExpr::Any), // Unknown type
+                        SymbolType::Function { .. } => Ok(TypeExpr::Any),
                     }
                 } else {
-                    Err(format!("undefined variable '{}'", name))
+                    Err(self.error("S004", format!("undefined variable '{}'", name), span))
                 }
             },
 
-            Expr::Call { callee, args } => {
-                let func_name = match &**callee {
-                    Expr::Variable(name) => name,
-                    _ => return Err("Can only call named functions".to_string()),
+            ExprKind::Call { callee, args } => {
+                let func_name = match &callee.kind {
+                    ExprKind::Variable(name) => name,
+                    _ => return Err(self.error("S005", "can only call named functions", span))
                 };
 
                 // Look up the function symbol
                 if let Some(sym) = self.resolve(func_name) {
                     if let SymbolType::Function { params, return_type } = &sym.kind {
-                        let is_flexible = params.len() == 1 && params[0] == TypeExpr::Atomic(TokenType::NONE);
+                        let is_flexible = params.len() == 1 && params[0] == TypeExpr::Any;
 
                         if !is_flexible {
                             if args.len() != params.len() {
-                                return Err(format!(
+                                return Err(self.error("S006", format!(
                                     "function '{}' expects {} arguments, got {}", 
                                     func_name, params.len(), args.len()
-                                ));
+                                ), span));
                             }
 
                             for (i, arg) in args.iter().enumerate() {
@@ -247,49 +260,56 @@ impl Analyzer {
                                 let param_type = &params[i];
 
                                 if !self.types_match(param_type, &arg_type) {
-                                    return Err(format!(
-                                        "type error in call to '{}': argument {} expected {:?}, got {:?}",
+                                    return Err(self.error("S007", format!(
+                                        "type error in call to '{}': argument {} expected {}, got {}",
                                         func_name, i + 1, param_type, arg_type
-                                    ));
+                                    ), span));
                                 }
                             }
                         }
 
                         Ok(return_type.clone())
                     } else {
-                        Err(format!("'{}' is not a function", func_name))
+                        Err(self.error("S008", format!("'{}' is not a function", func_name), span))
                     }
                 } else {
-                    Err(format!("undefined function '{}'", func_name))
+                    Err(self.error("S004", format!("undefined function '{}'", func_name), span))
                 }
             },
 
-            Expr::MethodCall { callee, args, method } => {
+            ExprKind::MethodCall { callee, args, method } => {
                 let callee_type = self.infer_type(callee)?;
 
                 match (callee_type, method.as_str()) {
                     (TypeExpr::List(inner_type), "append") => { // check if they are calling .append() on a List
                         if args.len() != 1 {
-                            return Err("append() takes exactly 1 argument".to_string());
+                            return Err(
+                                self.error("S006", "append() takes exactly 1 argument", span)
+                                    .with_help("remove the extra argument")
+                            );
                         }
 
                         let arg_type = self.infer_type(&args[0])?;
                         
                         if !self.types_match(&inner_type, &arg_type) {
-                            return Err(format!(
-                                "type error: cannot append {:?} to list[{:?}]", 
+                            return Err(self.error("S007", format!(
+                                "type error: cannot append {} to list[{}]", 
                                 arg_type, inner_type
-                            ));
+                            ), span));
                         }
 
-                        Ok(TypeExpr::Atomic(TokenType::NONE))
+                        Ok(TypeExpr::Any)
                     }
 
-                    (t, m) => Err(format!("type {:?} has no method '{}'", t, m))
+                    (TypeExpr::Any, _) => {
+                        Ok(TypeExpr::Any)
+                    }
+
+                    (t, m) => Err(self.error("S009", format!("type {} has no method '{}'", t, m), span))
                 }
             },
 
-            Expr::Binary { left, operator, right } => {
+            ExprKind::Binary { left, operator, right } => {
                 let left_type = self.infer_type(left)?;
                 let _right_type = self.infer_type(right)?;
 
@@ -311,34 +331,34 @@ impl Analyzer {
                 }
             }
 
-            Expr::Unary { operator: _, right } => {
+            ExprKind::Unary { operator: _, right } => {
                 self.infer_type(right)
             },
 
-            Expr::Subscript { callee, index } => {
+            ExprKind::Subscript { callee, index } => {
                 let list_type = self.infer_type(callee)?;
                 let index_type = self.infer_type(index)?;
 
                 if !self.types_match(&TypeExpr::Atomic(TokenType::INT), &index_type) {
-                    return Err(format!("list indices must be integers, not {:?}", index_type));
+                    return Err(self.error("S010", format!("list indices must be integers, not {}", index_type), span));
                 }
 
                 match list_type {
                     TypeExpr::List(inner) => Ok(*inner),
 
                     TypeExpr::Atomic(TokenType::LIST) => {
-                        Ok(TypeExpr::Atomic(TokenType::NONE))
+                        Ok(TypeExpr::Any)
                     }
 
-                    TypeExpr::Atomic(TokenType::NONE) => {
-                        Ok(TypeExpr::Atomic(TokenType::NONE))
+                    TypeExpr::Any => {
+                        Ok(TypeExpr::Any)
                     }
 
-                    _ => Err(format!("type {:?} is not subscriptable", list_type))
+                    _ => Err(self.error("S011", format!("type {} is not subscriptable", list_type), span))
                 }
             }
 
-            Expr::List(elements) => {
+            ExprKind::List(elements) => {
                 if elements.is_empty() {
                     Ok(TypeExpr::Atomic(TokenType::LIST))
                 } else {
@@ -348,10 +368,10 @@ impl Analyzer {
                         let current_type = self.infer_type(element)?;
 
                         if !self.types_match(&element_type, &current_type) {
-                            return Err(format!(
-                                "type error: element at index {} has type {:?}, but expected {:?}",
+                            return Err(self.error("S012", format!(
+                                "type error: element at index {} has type {}, but expected {}",
                                 i + 1, current_type, element_type
-                            ));
+                            ), span));
                         }
                     }
 
@@ -359,9 +379,9 @@ impl Analyzer {
                 }
             }
 
-            Expr::Grouping(inner) => self.infer_type(inner),
+            ExprKind::Grouping(inner) => self.infer_type(inner),
 
-            _ => Ok(TypeExpr::Atomic(TokenType::NONE))
+            _ => Ok(TypeExpr::Any)
         }
     }
 
@@ -393,9 +413,14 @@ impl Analyzer {
 
     fn types_match(&self, expected: &TypeExpr, actual: &TypeExpr) -> bool {
         match (expected, actual) {
+            (TypeExpr::Any, _) => true, 
+            (_, TypeExpr::Any) => true,
+
+            (TypeExpr::Union(left, right), actual_type) => {
+                self.types_match(left, actual_type) || self.types_match(right, actual_type)
+            }
+
             (TypeExpr::Atomic(t1), TypeExpr::Atomic(t2)) => t1 == t2,
-            (TypeExpr::Atomic(TokenType::NONE), _) => true, // 'Any' matches anything
-            (_, TypeExpr::Atomic(TokenType::NONE)) => true, 
 
             (TypeExpr::List(inner_expected), TypeExpr::List(inner_actual)) => {
                 self.types_match(inner_expected, inner_actual)
@@ -406,4 +431,5 @@ impl Analyzer {
 
             _ => false,
         }
-    }}
+    }
+}
