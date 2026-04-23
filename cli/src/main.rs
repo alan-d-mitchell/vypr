@@ -170,7 +170,8 @@ fn main() {
     // --- PHASE 3: SEMANTIC ANALYSIS ---
     let mut analyzer = Analyzer::new();
     if let Err(e) = analyzer.analyze(&ast) {
-        eprintln!("[SEMANTIC ERROR] {}", e);
+        e.report(&contents, &input);
+
         process::exit(1);
     }
 
@@ -214,13 +215,13 @@ fn main() {
             // --- PHASE 5: EXECUTION ---
             let mut vm = VM::new(chunk);
             if let Err(e) = vm.run() {
-                eprintln!("[RUNTIME ERROR] {:?}", e);
+                e.report(&contents, &input);
                 process::exit(1);
             }
         },
 
         Err(e) => {
-            eprintln!("[COMPILER ERROR] {}", e);
+            e.report(&contents, &input);
             process::exit(1);
         }
     }
