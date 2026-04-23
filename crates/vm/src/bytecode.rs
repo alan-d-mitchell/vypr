@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
+use error::error::Span;
+
 use crate::value::{Value, DataType};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,6 +42,7 @@ pub enum OpCode {
 pub struct Chunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
+    pub spans: Vec<Span>,
 }
 
 impl Chunk {
@@ -47,12 +50,14 @@ impl Chunk {
     pub fn new() -> Self {
         Self {
             code: Vec::new(),
-            constants: Vec::new()
+            constants: Vec::new(),
+            spans: Vec::new(),
         }
     }
 
-    pub fn write(&mut self, op: OpCode) {
+    pub fn write(&mut self, op: OpCode, span: Span) {
         self.code.push(op);
+        self.spans.push(span);
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
