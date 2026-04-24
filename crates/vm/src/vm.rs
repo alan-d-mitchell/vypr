@@ -506,11 +506,11 @@ impl VM {
 
     // Helper to get the top frame
     fn current_frame(&self) -> &CallFrame {
-        self.frames.last().expect("Call stack empty")
+        self.frames.last().expect("call stack empty")
     }
 
     fn current_frame_mut(&mut self) -> &mut CallFrame {
-        self.frames.last_mut().expect("Call stack empty")
+        self.frames.last_mut().expect("call stack empty")
     }
 
     fn call_value(&mut self, arg_count: usize) -> Result<(), VyprError> {
