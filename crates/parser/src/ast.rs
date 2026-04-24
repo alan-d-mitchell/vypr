@@ -80,6 +80,8 @@ pub enum StmtKind<'s> {
     },
 
     Pass,
+    Break,
+    Continue,
 
     ExprStmt(Expr),
 }

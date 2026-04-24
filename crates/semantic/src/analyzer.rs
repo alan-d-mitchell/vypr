@@ -6,6 +6,7 @@ use error::error::{Span, VyprError};
 pub struct Analyzer {
     scopes: Vec<Scope>, // Stack of scopes. Index 0 is global.
     current_return_type: Option<TypeExpr>,
+    loop_depth: usize,
 }
 
 impl Analyzer {
@@ -55,6 +56,7 @@ impl Analyzer {
         Self {
             scopes: vec![global_scope], // Start with global scope
             current_return_type: None,
+            loop_depth: 0
         }
     }
 
@@ -161,6 +163,8 @@ impl Analyzer {
                     _ => return Err(self.error("S002", format!("type error: type {} is not iterable", iter_type), span))
                 };
 
+                self.loop_depth += 1;
+
                 self.enter_scope();
                 
                 self.define(var.clone(), SymbolType::Locked(item_type), true);
@@ -169,16 +173,22 @@ impl Analyzer {
                     self.visit_stmt(s)?;
                 }
                 self.exit_scope();
+
+                self.loop_depth -= 1;
             }
 
             StmtKind::While { condition, body } => {
                 self.visit_expr(condition)?;
+
+                self.loop_depth += 1;
 
                 self.enter_scope();
                 for s in body {
                     self.visit_stmt(s)?;
                 }
                 self.exit_scope();
+
+                self.loop_depth -= 1;
             }
 
             StmtKind::ExprStmt(expr) => {
@@ -204,6 +214,18 @@ impl Analyzer {
 
             StmtKind::Pass => {
                 return Ok(())
+            }
+
+            StmtKind::Break => {
+                if self.loop_depth == 0 {
+                    return Err(self.error("S014", "'break' outside loop", span));
+                }
+            }
+
+            StmtKind::Continue => {
+                if self.loop_depth == 0 {
+                    return Err(self.error("S015", "'continue' outside loop", span));
+                }
             }
         }
 

@@ -94,6 +94,26 @@ impl<'p> Parser<'p> {
             return self.pass_statement();
         }
 
+        if self.match_token(TokenType::BREAK) {
+            let span = self.previous().span;
+            self.consume_statement_end()?;
+
+            return Ok(Stmt {
+                kind: StmtKind::Break,
+                span
+            });
+        }
+
+        if self.match_token(TokenType::CONTINUE) {
+            let span = self.previous().span;
+            self.consume_statement_end()?;
+
+            return Ok(Stmt {
+                kind: StmtKind::Continue,
+                span
+            });
+        }
+
         if let TokenType::IDENTIFIER(name) = self.peek().kind {
             if self.check_identifier() {
                 let span = self.peek().span;
@@ -438,6 +458,22 @@ impl<'p> Parser<'p> {
         self.logic_or()
     }
 
+    fn logic_not(&mut self) -> Result<Expr, VyprError> {
+        if self.match_token(TokenType::NOT) {
+            let operator = self.previous().kind;
+            let span = self.previous().span;
+            let right = self.logic_not()?;
+
+            return Ok(Expr {
+                kind: ExprKind::Unary { operator, right: Box::new(right) },
+                span
+            });
+
+        }
+        
+        self.equality()
+    }
+
     fn logic_or(&mut self) -> Result<Expr, VyprError> {
         let mut expr = self.logic_and()?;
 
@@ -456,7 +492,7 @@ impl<'p> Parser<'p> {
     }
 
     fn logic_and(&mut self) -> Result<Expr, VyprError> {
-        let mut expr = self.equality()?;
+        let mut expr = self.logic_not()?;
 
         while self.match_token(TokenType::AND) {
             let operator = self.previous().kind;
@@ -548,7 +584,7 @@ impl<'p> Parser<'p> {
     }
 
     fn unary(&mut self) -> Result<Expr, VyprError> {
-        if self.match_tokens(&[TokenType::MINUS, TokenType::NOT]) {
+        if self.match_tokens(&[TokenType::MINUS]) {
             let operator = self.previous().kind;
             let span = self.previous().span;
             let right = self.unary()?; // Recursive for --5

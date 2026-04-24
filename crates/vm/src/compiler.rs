@@ -11,10 +11,16 @@ struct Local {
     depth: usize
 }
 
+struct LoopState {
+    continue_jumps: Vec<usize>,
+    break_jumps: Vec<usize>,
+}
+
 pub struct Compiler {
     chunk: Chunk,
     locals: Vec<Local>,
     scope_depth: usize,
+    loop_stack: Vec<LoopState>
 }
 
 impl Compiler {
@@ -23,7 +29,8 @@ impl Compiler {
         Self {
             chunk: Chunk::new(),
             locals: Vec::new(),
-            scope_depth: 0
+            scope_depth: 0,
+            loop_stack: Vec::new()
         }
     }
 
@@ -141,21 +148,32 @@ impl Compiler {
 
                 let loop_start = self.chunk.code.len();
 
-                self.chunk.write(OpCode::GetLocal(index_slot), span); // Index
-                self.chunk.write(OpCode::GetLocal(list_slot), span); // List
+                self.loop_stack.push(LoopState {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                });
+
+                self.chunk.write(OpCode::GetLocal(index_slot), span); 
+                self.chunk.write(OpCode::GetLocal(list_slot), span); 
                 self.chunk.write(OpCode::Length, span);
                 self.chunk.write(OpCode::Less, span);
 
                 let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
                 self.chunk.write(OpCode::Pop, span);
 
-                self.chunk.write(OpCode::GetLocal(list_slot), span); // List
-                self.chunk.write(OpCode::GetLocal(index_slot), span); // Index
+                self.chunk.write(OpCode::GetLocal(list_slot), span); 
+                self.chunk.write(OpCode::GetLocal(index_slot), span); 
                 self.chunk.write(OpCode::GetSubscript, span);
                 self.chunk.write(OpCode::SetLocal(var_idx), span);
 
                 for s in body {
                     self.compile_stmt(s)?;
+                }
+
+                let current_loop = self.loop_stack.pop().unwrap();
+
+                for continue_jump in current_loop.continue_jumps {
+                    self.patch_jump(continue_jump)?;
                 }
 
                 self.chunk.write(OpCode::GetLocal(index_slot), span);
@@ -168,33 +186,47 @@ impl Compiler {
                 self.patch_jump(exit_jump)?;
                 self.chunk.write(OpCode::Pop, span);
 
+                for break_jump in current_loop.break_jumps {
+                    self.patch_jump(break_jump)?;
+                }
+
                 self.exit_scope();
             }
 
             StmtKind::While { condition, body } => {
-                // 1. Mark the start of the loop (where we jump back to)
                 let loop_start = self.chunk.code.len();
 
-                // 2. Compile Condition
+                self.loop_stack.push(LoopState {
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                });
+
                 self.compile_expr(condition)?;
 
-                // 3. Emit Exit Jump (if condition is false)
                 let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                self.chunk.write(OpCode::Pop, span); // Pop condition
+                self.chunk.write(OpCode::Pop, span);
 
-                // 4. Compile Body
                 for s in body {
                     self.compile_stmt(s)?;
                 }
 
-                // 5. Emit Loop (Jump Back)
+                let current_loop = self.loop_stack.pop().unwrap();
+
+                for continue_jump in current_loop.continue_jumps {
+                    self.patch_jump(continue_jump)?;
+                }
+
                 self.emit_loop(loop_start, span)?;
 
-                // 6. Patch Exit Jump
                 self.patch_jump(exit_jump)?;
-                
+
                 // 7. Pop condition (when exiting loop)
                 self.chunk.write(OpCode::Pop, span);
+
+                // Patch Breaks (Lands completely outside the loop!)
+                for break_jump in current_loop.break_jumps {
+                    self.patch_jump(break_jump)?;
+                }
             }
 
             StmtKind::FuncDecl { name, body, params, .. } => {
@@ -233,6 +265,25 @@ impl Compiler {
 
             StmtKind::Pass => {
                 return Ok(())
+            }
+
+            StmtKind::Break => {
+                if self.loop_stack.is_empty() {
+                    return Err(self.error("C004", "'break' outside loop", span));
+                }
+
+                let jump = self.emit_jump(OpCode::Jump, span);
+
+                self.loop_stack.last_mut().unwrap().break_jumps.push(jump);
+            }
+
+            StmtKind::Continue => {
+                if self.loop_stack.is_empty() {
+                    return Err(self.error("C005", "'continue' outside loop", span));
+                }
+
+                let jump = self.emit_jump(OpCode::Jump, span);
+                self.loop_stack.last_mut().unwrap().continue_jumps.push(jump); 
             }
         }
 
