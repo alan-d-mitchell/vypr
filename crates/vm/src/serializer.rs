@@ -93,6 +93,18 @@ impl Serializer {
                 self.file.write_all(&len.to_be_bytes())?;
                 self.file.write_all(s.as_bytes())?;
             }
+            Value::None => {
+                self.file.write_all(&[0x05])?;
+            }
+            Value::Native(_) => {
+                // Cannot serialize native functions
+                self.file.write_all(&[0x05])?; // Write None placeholder
+            }
+            Value::Function(chunk) => {
+                self.file.write_all(&[0x06])?;
+                // Recursive serialization for function bodies
+                self.write_chunk(chunk)?;
+            }
             Value::List(items) => {
                 self.file.write_all(&[0x07])?; // tag
                 let borrowed = items.borrow();
@@ -107,18 +119,6 @@ impl Serializer {
                 self.file.write_all(&[0x08])?;
                 self.file.write_all(&start.to_le_bytes())?;
                 self.file.write_all(&stop.to_le_bytes())?;
-            }
-            Value::None => {
-                self.file.write_all(&[0x05])?;
-            }
-            Value::Function(chunk) => {
-                self.file.write_all(&[0x06])?;
-                // Recursive serialization for function bodies
-                self.write_chunk(chunk)?;
-            }
-            Value::Native(_) => {
-                // Cannot serialize native functions
-                self.file.write_all(&[0x05])?; // Write None placeholder
             }
         }
         Ok(())
@@ -159,14 +159,9 @@ impl Serializer {
             OpCode::Sub => buf.push(0x09),
             OpCode::Mul => buf.push(0x0A),
             OpCode::Div => buf.push(0x0B),
-            OpCode::Modulo => buf.push(0x18),
-            OpCode::FloorDiv => buf.push(0x19),
-            OpCode::Power => buf.push(0x1A),
             OpCode::Equal => buf.push(0x0C),
             OpCode::Less => buf.push(0x0D),
             OpCode::Greater => buf.push(0x0E),
-            OpCode::LessEqual => buf.push(0x16),
-            OpCode::GreaterEqual => buf.push(0x17),
             OpCode::Not => buf.push(0x0F),
             OpCode::Negate => buf.push(0x10),
             OpCode::Call(args) => {
@@ -174,12 +169,6 @@ impl Serializer {
                 buf.push(*args as u8);
             }
             OpCode::Return => buf.push(0x12),
-            OpCode::GetSubscript => buf.push(0x1B),
-            OpCode::BuildList(count) => {
-                buf.push(0x1C);
-                buf.extend_from_slice(&(*count as u32).to_be_bytes());
-            }
-            OpCode::Length => buf.push(0x1D),
             OpCode::Jump(offset) => {
                 buf.push(0x13);
                 buf.extend_from_slice(&(*offset as u32).to_be_bytes());
@@ -192,6 +181,17 @@ impl Serializer {
                 buf.push(0x15);
                 buf.extend_from_slice(&(*offset as u32).to_be_bytes());
             }
+            OpCode::LessEqual => buf.push(0x16),
+            OpCode::GreaterEqual => buf.push(0x17),
+            OpCode::Modulo => buf.push(0x18),
+            OpCode::FloorDiv => buf.push(0x19),
+            OpCode::Power => buf.push(0x1A),
+            OpCode::GetSubscript => buf.push(0x1B),
+            OpCode::BuildList(count) => {
+                buf.push(0x1C);
+                buf.extend_from_slice(&(*count as u32).to_be_bytes());
+            }
+            OpCode::Length => buf.push(0x1D),
             OpCode::Invoke(name_idx, args) => {
                 buf.push(0x1E); // Next available hex tag
                 buf.extend_from_slice(&(*name_idx as u32).to_be_bytes());
