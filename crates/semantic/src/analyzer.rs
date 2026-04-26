@@ -93,7 +93,26 @@ impl Analyzer {
 
                     self.define(name.clone(), SymbolType::Locked(ann.clone()), true);
                 } else {
-                    self.define(name.clone(), SymbolType::Dynamic, true);
+                    let mut is_locked = None;
+
+                    if let Some(symbol) = self.resolve(name) {
+                        if let SymbolType::Locked(locked_type) = &symbol.kind {
+                            if !self.types_match(locked_type, &value_type) {
+                                return Err(self.error("S013", format!(
+                                    "type error: variable '{}' is locked to type {} but assigned value of type {}",
+                                    name, locked_type, value_type
+                                ), span));
+                            }
+
+                            is_locked = Some(locked_type.clone());
+                        }
+                    }
+
+                    if let Some(t) = is_locked {
+                        self.define(name.clone(), SymbolType::Locked(t), true);
+                    } else {
+                        self.define(name.clone(), SymbolType::Dynamic, true);
+                    }
                 }
             }
 
@@ -333,23 +352,69 @@ impl Analyzer {
 
             ExprKind::Binary { left, operator, right } => {
                 let left_type = self.infer_type(left)?;
-                let _right_type = self.infer_type(right)?;
+                let right_type = self.infer_type(right)?;
+
+                if left_type == TypeExpr::Any || right_type == TypeExpr::Any {
+                    return match operator {
+                        TokenType::GREATER_THAN | TokenType::LESS_THAN | TokenType::DOUBLE_EQUAL |
+                        TokenType::LESS_THAN_EQUAL | TokenType::GREATER_THAN_EQUAL | TokenType::AND |
+                        TokenType::OR => Ok(TypeExpr::Atomic(TokenType::BOOL)),
+                        _ => Ok(TypeExpr::Any),
+                    }
+                }
 
                 match operator {
-                    TokenType::PLUS | TokenType::MINUS | TokenType::STAR | 
-                    TokenType::FSLASH | TokenType::DOUBLE_STAR | TokenType::MODULO |
-                    TokenType::DOUBLE_FSLASH => {
-                        Ok(left_type)
-                     },
+                    TokenType::PLUS => {
+                        match (&left_type, &right_type) {
+                            (TypeExpr::Atomic(TokenType::INT), TypeExpr::Atomic(TokenType::INT)) => Ok(TypeExpr::Atomic(TokenType::INT)),
+                            (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::FLOAT)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
 
-                    TokenType::GREATER_THAN | TokenType::LESS_THAN | TokenType::DOUBLE_EQUAL |
-                    TokenType::LESS_THAN_EQUAL | TokenType::GREATER_THAN_EQUAL | TokenType::AND |
-                    TokenType::OR => {
-                         Ok(TypeExpr::Atomic(TokenType::BOOL))
-                     },
+                            (TypeExpr::Atomic(TokenType::INT), TypeExpr::Atomic(TokenType::FLOAT)) |
+                            (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::INT)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
 
+                            (TypeExpr::Atomic(TokenType::STR), TypeExpr::Atomic(TokenType::STR)) => Ok(TypeExpr::Atomic(TokenType::STR)),
+                            
+                            _ => Err(self.error("S017", format!("unsupported operand types for +: {} and {}", left_type, right_type), span))
+                        }
+                    },
 
-                     _ => Ok(left_type)
+                    TokenType::MINUS | TokenType::STAR | TokenType::FSLASH | 
+                    TokenType::DOUBLE_STAR | TokenType::MODULO | TokenType::DOUBLE_FSLASH => {
+                        if matches!(operator, TokenType::FSLASH | TokenType::MODULO | TokenType::DOUBLE_FSLASH) {
+                            if let ExprKind::Literal(TokenType::INT_LITERAL(0)) = right.kind {
+                                return Err(self.error("S016", "division by zero", span));
+                            }
+                        }
+
+                        // These operators ONLY support numeric types
+                        match (&left_type, &right_type) {
+                            (TypeExpr::Atomic(TokenType::INT), TypeExpr::Atomic(TokenType::INT)) => Ok(TypeExpr::Atomic(TokenType::INT)),
+                            (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::FLOAT)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
+
+                            (TypeExpr::Atomic(TokenType::INT), TypeExpr::Atomic(TokenType::FLOAT)) |
+                            (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::INT)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
+                            
+                            _ => Err(self.error("S017", format!("unsupported operand types for math operator: {} and {}", left_type, right_type), span))
+                        }
+                    },
+
+                    TokenType::GREATER_THAN | TokenType::LESS_THAN | TokenType::LESS_THAN_EQUAL | TokenType::GREATER_THAN_EQUAL => {
+                        match (&left_type, &right_type) {
+                            (TypeExpr::Atomic(TokenType::INT), TypeExpr::Atomic(TokenType::INT)) |
+                            (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::FLOAT)) |
+
+                            (TypeExpr::Atomic(TokenType::INT), TypeExpr::Atomic(TokenType::FLOAT)) |
+                            (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::INT)) => Ok(TypeExpr::Atomic(TokenType::BOOL)),
+
+                            _ => Err(self.error("S017", format!("unsupported operand types for comparison: {} and {}", left_type, right_type), span))
+                        }
+                    },
+
+                    TokenType::DOUBLE_EQUAL | TokenType::AND | TokenType::OR => {
+                        Ok(TypeExpr::Atomic(TokenType::BOOL))
+                    },
+
+                    _ => Ok(left_type)
                 }
             }
 
@@ -405,10 +470,6 @@ impl Analyzer {
 
             _ => Ok(TypeExpr::Any)
         }
-    }
-
-    fn current_scope(&mut self) -> &mut Scope {
-        self.scopes.last_mut().expect("scope stack is empty")
     }
 
     fn enter_scope(&mut self) {
