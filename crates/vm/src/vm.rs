@@ -316,7 +316,12 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a + b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a + b)),
+
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 + b)),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a + b as f64)),
+
                         (Value::Str(a), Value::Str(b)) => self.push(Value::Str(a + &b)),
+
                         _ => return Err(self.error("R002", "invalid operands for +")),
                     }
                 }
@@ -328,6 +333,10 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a - b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a - b)),
+
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 + b)),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a + b as f64)),
+
                         _ => return Err(self.error("R002", "invalid operands for -")),
                     }
                 }
@@ -339,6 +348,10 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a * b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a * b)),
+
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 * b)),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a * b as f64)),
+
                         _ => return Err(self.error("R002", "invalid operands for *")),
                     }
                 }
@@ -348,8 +361,19 @@ impl VM {
                     let a = self.pop()?;
 
                     match (a, b) {
-                        (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a / b)), // Integer division
-                        (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a / b)),
+                        (Value::Int(a), Value::Int(b)) => {
+                            if b == 0 {
+                                return Err(self.error("R007", "division by zero"));
+                            }
+
+                            self.push(Value::Int(a / b)) // Integer division
+                        }
+                        (Value::Float(a), Value::Float(b)) => {
+                            self.push(Value::Float(a / b))
+                        }
+
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 / b)),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a / b as f64)),
                         _ => return Err(self.error("R002", "invalid operands for /")),
                     }
                 }
@@ -359,8 +383,18 @@ impl VM {
                     let a = self.pop()?;
 
                     match (a, b) {
-                        (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a % b)),
+                        (Value::Int(a), Value::Int(b)) => {
+                            if b == 0 {
+                                return Err(self.error("R007", "modulo by zero"));
+                            }
+
+                            self.push(Value::Int(a % b))
+                        }
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a % b)),
+
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 % b)),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a % b as f64)),
+
                         _ => return Err(self.error("R002", "operands must be numbers")),
                     }
                 }
@@ -370,8 +404,18 @@ impl VM {
                     let a = self.pop()?;
 
                     match (a, b) {
-                        (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a / b)), 
+                        (Value::Int(a), Value::Int(b)) => {
+                            if b == 0 {
+                                return Err(self.error("R007", "division by zero"));
+                            }
+
+                            self.push(Value::Int(a / b))
+                        }
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float((a / b).floor())),
+
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Float((a as f64 / b).floor())),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Float((a / b as f64).floor())),
+
                         _ => return Err(self.error("R002", "operands must be numbers")),
                     }
                 }
