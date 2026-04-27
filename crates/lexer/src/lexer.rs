@@ -1,6 +1,9 @@
 use super::token::{Token, TokenType};
 use error::error::{Span, VyprError};
 
+// fix: bug related to every time the enter button is pressed, a newline token is emitted, thus a
+// new statement is expected, thus making it to where spreading out elements of a, for example,
+// list leads to a compiler error
 pub struct Lexer<'l> {
     input: &'l str,
     chars: Vec<char>,
@@ -11,6 +14,7 @@ pub struct Lexer<'l> {
     line: usize,
     column: usize,
     pub errors: Vec<VyprError>,
+    nesting_depth: usize,
 }
 
 impl<'l> Lexer<'l> {
@@ -26,6 +30,7 @@ impl<'l> Lexer<'l> {
             line: 1,
             column: 1,
             errors: Vec::new(),
+            nesting_depth: 0
         }
     }
 
@@ -167,7 +172,12 @@ impl<'l> Lexer<'l> {
                 self.line += 1;
                 self.column = 1;
 
-                Ok(Some(TokenType::NEWLINE))
+                if self.nesting_depth > 0 {
+                    Ok(None)
+                } else {
+                    Ok(Some(TokenType::NEWLINE))
+                }
+
             }
             '"' | '\'' =>  {
                 if self.peek() == c && self.peek_next() == c {
@@ -180,12 +190,12 @@ impl<'l> Lexer<'l> {
                     Ok(Some(kind))
                 }
             },
-            '(' => Ok(Some(TokenType::LPAREN)),
-            ')' => Ok(Some(TokenType::RPAREN)),
-            '{' => Ok(Some(TokenType::LBRACE)),
-            '}' => Ok(Some(TokenType::RBRACE)),
-            '[' => Ok(Some(TokenType::LBRACKET)),
-            ']' => Ok(Some(TokenType::RBRACKET)),
+            '(' => { self.nesting_depth += 1; Ok(Some(TokenType::LPAREN)) },
+            ')' => { self.nesting_depth = self.nesting_depth.saturating_sub(1); Ok(Some(TokenType::RPAREN)) },
+            '{' => { self.nesting_depth += 1; Ok(Some(TokenType::LBRACE)) },
+            '}' => { self.nesting_depth = self.nesting_depth.saturating_sub(1); Ok(Some(TokenType::RBRACE)) },
+            '[' => { self.nesting_depth += 1; Ok(Some(TokenType::LBRACKET)) },
+            ']' => { self.nesting_depth = self.nesting_depth.saturating_sub(1); Ok(Some(TokenType::RBRACKET)) },
             ';' => Ok(Some(TokenType::SEMICOLON)),
             '.' => Ok(Some(TokenType::PERIOD)),
             ':' => Ok(Some(TokenType::COLON)),

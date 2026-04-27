@@ -356,6 +356,10 @@ impl<'p> Parser<'p> {
 
         if !self.check(TokenType::RBRACKET) {
             loop {
+                if self.check(TokenType::RBRACKET) {
+                    break;
+                }
+
                 elements.push(self.expression()?);
 
                 if !self.match_token(TokenType::COMMA) {
