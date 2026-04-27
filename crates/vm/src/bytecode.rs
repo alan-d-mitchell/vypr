@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
 use error::error::Span;
@@ -43,6 +43,12 @@ pub struct Chunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
     pub spans: Vec<Span>,
+    strings: HashMap<String, usize>,
+    ints: HashMap<i64, usize>,
+    floats: HashMap<u64, usize>,
+    true_idx: Option<usize>,
+    false_idx: Option<usize>,
+    none_idx: Option<usize>,
 }
 
 impl Chunk {
@@ -52,6 +58,12 @@ impl Chunk {
             code: Vec::new(),
             constants: Vec::new(),
             spans: Vec::new(),
+            strings: HashMap::new(),
+            ints: HashMap::new(),
+            floats: HashMap::new(),
+            true_idx: None,
+            false_idx: None,
+            none_idx: None,
         }
     }
 
@@ -61,9 +73,84 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
-        self.constants.push(value);
+        match &value {
+            Value::Str(s) => {
+                if let Some(&idx) = self.strings.get(s) {
+                    return idx;
+                }
 
-        self.constants.len() - 1
+                let idx = self.constants.len();
+
+                self.strings.insert(s.clone(), idx);
+                self.constants.push(value);
+
+                idx
+            }
+
+            Value::Int(i) => {
+                if let Some(&idx) = self.ints.get(i) {
+                    return idx;
+                }
+
+                let idx = self.constants.len();
+
+                self.ints.insert(*i, idx);
+                self.constants.push(value);
+
+                idx
+            }
+
+            Value::Float(f) => {
+                let bits = f.to_bits();
+
+                if let Some(&idx) = self.floats.get(&bits) {
+                    return idx;
+                }
+
+                let idx = self.constants.len();
+
+                self.floats.insert(bits, idx);
+                self.constants.push(value);
+
+                idx
+            }
+
+            Value::Bool(b) => {
+                if *b {
+                    if let Some(idx) = self.true_idx { return idx; }
+                    let idx = self.constants.len();
+
+                    self.true_idx = Some(idx);
+                    self.constants.push(value);
+
+                    idx
+                } else {
+                    if let Some(idx) = self.false_idx { return idx; }
+
+                    let idx = self.constants.len();
+
+                    self.false_idx = Some(idx);
+                    self.constants.push(value);
+
+                    idx
+                }
+            }
+
+            Value::None => {
+                if let Some(idx) = self.none_idx { return idx; }
+                let idx = self.constants.len();
+
+                self.none_idx = Some(idx);
+                self.constants.push(value);
+
+                idx
+            }
+
+            _ => {
+                self.constants.push(value);
+                self.constants.len() - 1
+            }
+        }
     }
 
     pub fn disassemble(&self, name: &str) -> String {
