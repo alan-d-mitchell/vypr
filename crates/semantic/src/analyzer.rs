@@ -449,20 +449,17 @@ impl Analyzer {
                 if elements.is_empty() {
                     Ok(TypeExpr::Atomic(TokenType::LIST))
                 } else {
-                    let element_type = self.infer_type(&elements[0])?;
+                    let mut list_type = self.infer_type(&elements[0])?;
 
-                    for (i, element) in elements.iter().skip(1).enumerate() {
+                    for element in elements.iter().skip(1) {
                         let current_type = self.infer_type(element)?;
 
-                        if !self.types_match(&element_type, &current_type) {
-                            return Err(self.error("S012", format!(
-                                "type error: element at index {} has type {}, but expected {}",
-                                i + 1, current_type, element_type
-                            ), span));
+                        if !self.types_match(&list_type, &current_type) {
+                            list_type = TypeExpr::Union(Box::new(list_type), Box::new(current_type));
                         }
                     }
 
-                    Ok(TypeExpr::List(Box::new(element_type)))
+                    Ok(TypeExpr::List(Box::new(list_type)))
                 }
             }
 
@@ -498,6 +495,10 @@ impl Analyzer {
         match (expected, actual) {
             (TypeExpr::Any, _) => true, 
             (_, TypeExpr::Any) => true,
+
+            (expected_type, TypeExpr::Union(left, right)) => {
+                self.types_match(expected_type, left) && self.types_match(expected_type, right)
+            }
 
             (TypeExpr::Union(left, right), actual_type) => {
                 self.types_match(left, actual_type) || self.types_match(right, actual_type)
