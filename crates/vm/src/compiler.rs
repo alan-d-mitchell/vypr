@@ -1,4 +1,4 @@
-use crate::bytecode::{Chunk, OpCode};
+use crate::bytecode::{self, Chunk, OpCode};
 use crate::value::{Value, DataType};
 
 use lexer::token::TokenType;
@@ -417,6 +417,92 @@ impl Compiler {
                 // Emit instruction to build list from the top N items on stack
                 self.chunk.write(OpCode::BuildList(elements.len()), span);
             }
+
+            ExprKind::ListComp { expr, var, iterator, condition } => {
+                let base_depth = self.current_stack_depth();
+                let padding_needed = base_depth.saturating_sub(self.locals.len());
+
+                for _ in 0..padding_needed {
+                    self.locals.push(Local { name: "<dummy>".to_string(), depth: self.scope_depth });
+                }
+
+                self.chunk.write(OpCode::BuildList(0), span);
+                self.add_local("<listcomp>".to_string());
+                let list_slot = self.locals.len() - 1;
+
+                self.compile_expr(*iterator)?;
+                self.add_local("<iter>".to_string());
+                let iter_slot = self.locals.len() - 1;
+
+                self.emit_constant(Value::Int(0), span);
+                self.add_local("<idx>".to_string());
+                let index_slot = self.locals.len() - 1;
+
+                self.emit_constant(Value::None, span);
+                self.add_local(var);
+                let var_slot = self.locals.len() - 1;
+
+                let loop_start = self.chunk.code.len();
+
+                self.chunk.write(OpCode::GetLocal(index_slot), span);
+                self.chunk.write(OpCode::GetLocal(iter_slot), span);
+                self.chunk.write(OpCode::Length, span);
+                self.chunk.write(OpCode::Less, span);
+
+                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
+                self.chunk.write(OpCode::Pop, span);
+
+                self.chunk.write(OpCode::GetLocal(iter_slot), span);
+                self.chunk.write(OpCode::GetLocal(index_slot), span);
+                self.chunk.write(OpCode::GetSubscript, span);
+                self.chunk.write(OpCode::SetLocal(var_slot), span);
+
+                let mut skip_jump = None;
+                if let Some(cond) = condition {
+                    self.compile_expr(*cond)?;
+                    skip_jump = Some(self.emit_jump(OpCode::JumpIfFalse, span));
+                    self.chunk.write(OpCode::Pop, span);
+                }
+
+                self.chunk.write(OpCode::GetLocal(list_slot), span);
+                self.compile_expr(*expr)?;
+
+                let append_idx = self.make_constant(Value::Str("append".to_string()));
+                self.chunk.write(OpCode::Invoke(append_idx, 1), span);
+                self.chunk.write(OpCode::Pop, span);
+
+                if let Some(jump) = skip_jump {
+                    let bypass_false_pop = self.emit_jump(OpCode::Jump, span);
+
+                    self.patch_jump(jump)?;
+                    self.chunk.write(OpCode::Pop, span);
+
+                    self.patch_jump(bypass_false_pop)?;
+                }
+
+                self.chunk.write(OpCode::GetLocal(index_slot), span);
+                self.emit_constant(Value::Int(1), span);
+                self.chunk.write(OpCode::Add, span);
+                self.chunk.write(OpCode::SetLocal(index_slot), span);
+
+                self.emit_loop(loop_start, span)?;
+
+                self.patch_jump(exit_jump)?;
+                self.chunk.write(OpCode::Pop, span); // pop loop condition result
+
+                self.chunk.write(OpCode::Pop, span); // pop var
+                self.chunk.write(OpCode::Pop, span); // pop idx
+                self.chunk.write(OpCode::Pop, span); // pop iter
+                
+                self.locals.pop(); // var
+                self.locals.pop(); // idx
+                self.locals.pop(); // iter
+                self.locals.pop(); // listcomp
+                
+                for _ in 0..padding_needed {
+                    self.locals.pop();
+                }            
+            }
         }
 
         Ok(())
@@ -439,6 +525,28 @@ impl Compiler {
         }
 
         None
+    }
+
+    fn current_stack_depth(&self) -> usize {
+        let mut depth: isize = 0;
+
+        for op in &self.chunk.code {
+            let effect = match op {
+                OpCode::Constant(_) | OpCode::GetGlobal(_) | OpCode::GetLocal(_) => 1,
+                OpCode::DefineGlobal(_, _) | OpCode::SetGlobal(_) | OpCode::SetLocal(_) | OpCode::Pop |
+                OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Modulo | 
+                OpCode::FloorDiv | OpCode::Power | OpCode::Equal | OpCode::Less | OpCode::Greater | 
+                OpCode::LessEqual | OpCode::GreaterEqual | OpCode::GetSubscript => -1,
+                OpCode::Not | OpCode::Negate | OpCode::Jump(_) | OpCode::JumpIfFalse(_) | 
+                OpCode::Loop(_) | OpCode::Length => 0,
+                OpCode::BuildList(count) => -(*count as isize) + 1,
+                OpCode::Call(arg_count) | OpCode::Invoke(_, arg_count) => -(*arg_count as isize),
+                OpCode::Return => 0,
+            };
+            depth += effect;
+        }
+        
+        depth.max(0) as usize
     }
 
     // Helper to declare a local (for parameters)
