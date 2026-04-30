@@ -352,9 +352,40 @@ impl<'p> Parser<'p> {
     }
 
     fn list_literal(&mut self) -> Result<ExprKind, VyprError> {
-        let mut elements = Vec::new();
+        if self.match_token(TokenType::RBRACKET) {
+            return Ok(ExprKind::List(Vec::new()));
+        }
+        
+        let first_expr = self.expression()?;
+        
+        if self.match_token(TokenType::FOR) {
+            let var_name = match self.advance().kind {
+                TokenType::IDENTIFIER(name) => name,
+                _ => return Err(self.make_error("P016", "expected variable name after 'for' in list comprehension")),
+            };
 
-        if !self.check(TokenType::RBRACKET) {
+            self.consume(TokenType::IN, "expected 'in' after variable")?;
+
+            let iterator = self.expression()?;
+
+            let mut condition = None;
+            if self.match_token(TokenType::IF) {
+                condition = Some(Box::new(self.expression()?));
+            }
+
+            self.consume(TokenType::RBRACKET, "expected ']' at end of list")?;
+
+            return Ok(ExprKind::ListComp {
+                expr: Box::new(first_expr),
+                var: var_name,
+                iterator: Box::new(iterator),
+                condition,
+            });
+        }
+
+        let mut elements = vec![first_expr];
+
+        if self.match_token(TokenType::COMMA) && !self.check(TokenType::RBRACKET) {
             loop {
                 if self.check(TokenType::RBRACKET) {
                     break;

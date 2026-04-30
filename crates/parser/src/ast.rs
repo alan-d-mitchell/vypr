@@ -124,5 +124,12 @@ pub enum ExprKind {
         callee: Box<Expr>,
         args: Vec<Expr>,
         method: String,
+    },
+
+    ListComp {
+        expr: Box<Expr>,
+        var: String,
+        iterator: Box<Expr>,
+        condition: Option<Box<Expr>>,
     }
 }
