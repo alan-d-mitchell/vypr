@@ -200,7 +200,21 @@ impl<'l> Lexer<'l> {
             '.' => Ok(Some(TokenType::PERIOD)),
             ':' => Ok(Some(TokenType::COLON)),
             ',' => Ok(Some(TokenType::COMMA)),
-            '|' => Ok(Some(TokenType::PIPE)),
+            '|' => if self.match_char('|') {
+                return Err(self.error("L001", "unexpected token '||'").with_help("use 'or' keyword instead"));
+            } else {
+                Ok(Some(TokenType::PIPE))
+            }
+            '&' => if self.match_char('&') {
+                return Err(self.error("L001", "unexpected token '&&'").with_help("use 'and' keyword instead"));
+            } else {
+                return Err(self.error("L001", "unexpected character '&'").with_help("bitwise operations are not supported, use 'and' for logical operations"));
+            }
+            '!' => if self.match_char('=') {
+                return Err(self.error("L001", "unexpected token '!='").with_help("use 'not x == y' for inequality"));
+            } else {
+                return Err(self.error("L001", "unexpected character '!'").with_help("use 'not' keyword instead"));
+            }
             '+' => if self.match_char('=') {
                 Ok(Some(TokenType::PLUS_EQUAL))
             } else {
