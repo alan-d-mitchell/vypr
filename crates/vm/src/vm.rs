@@ -74,7 +74,7 @@ impl VM {
         }
     }
 
-    fn error(&self, code: &'static str, message: impl Into<String>) -> VyprError {
+    pub(crate) fn error(&self, code: &'static str, message: impl Into<String>) -> VyprError {
         let ip = self.current_frame().ip.saturating_sub(1);
 
         let span = if ip < self.current_frame().chunk.spans.len() {
@@ -172,33 +172,7 @@ impl VM {
                 }
 
                 OpCode::Invoke(name_idx, arg_count) => {
-                    let method_name = self.read_string(name_idx)?;
-
-                    // Pop arguments off the stack (reverse order)
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.pop()?);
-                    }
-                    args.reverse();
-
-                    // Pop the parent object (the list) off the stack
-                    let obj = self.pop()?;
-
-                    match (obj, method_name.as_str()) {
-                        (Value::List(items), "append") => {
-                            if args.len() != 1 {
-                                return Err(self.error("R003", "append() takes exactly 1 argument").with_help("remove the extra argument"));
-                            }
-                            
-                            items.borrow_mut().push(args[0].clone());
-                            
-                            self.push(Value::None);
-                        }
-                        
-                        (val, method) => {
-                            return Err(self.error("R004", format!("object '{:?}' has no method '{}'", val.get_type() , method)));
-                        }
-                    }
+                    self.invoke_method(name_idx, arg_count)?;
                 }
 
                 OpCode::GetSubscript => {
@@ -618,18 +592,18 @@ impl VM {
         self.current_frame().chunk.constants[idx].clone()
     }
 
-    fn read_string(&self, idx: usize) -> Result<String, VyprError> {
+    pub(crate) fn read_string(&self, idx: usize) -> Result<String, VyprError> {
         match self.read_constant(idx) {
             Value::Str(s) => Ok(s),
             _ => Err(self.error("R005", "expected string in constant pool")),
         }
     }
 
-    fn push(&mut self, value: Value) {
+    pub(crate) fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> Result<Value, VyprError> {
+    pub(crate) fn pop(&mut self) -> Result<Value, VyprError> {
         self.stack.pop().ok_or_else(|| self.error("RPNC", "stack underflow")) // RPNC = Runtime Panic
     }
 }
