@@ -58,27 +58,36 @@ impl Value {
             _ => true,
         }
     }
+
+    pub fn repr(&self) -> String {
+        match self {
+            Value::Str(s) => format!("'{}'", s),
+            Value::List(items) => {
+                let borrowed = items.borrow();
+                let elements: Vec<String> = borrowed.iter().map(|v| v.repr()).collect();
+
+                format!("[{}]", elements.join(", "))
+            },
+
+            _ => format!("{}", self)
+        }
+    }
 }
 
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Value::Int(v) => write!(f, "{}", v),
-            Value::Float(v) => write!(f, "{}", v),
+            Value::Float(v) => {
+                if v.fract() == 0.0 {
+                    write!(f, "{}.0", v)
+                } else {
+                    write!(f, "{}", v)
+                }
+            }
             Value::Bool(v) => write!(f, "{}", v),
             Value::Str(v) => write!(f, "{}", v),
-            Value::List(items) => {
-                write!(f, "[")?;
-
-                for (i, item) in items.borrow().iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", item)?;
-                }
-
-                Ok(write!(f, "]")?)
-            }
+            Value::List(_) => write!(f, "{}", self.repr()),
             Value::Range(start, stop) => write!(f, "range({}, {})", start, stop),
             Value::None => write!(f, "None"),
             Value::Native(_) => write!(f, "<native fn>"),
