@@ -37,6 +37,12 @@ impl VyprError {
 
         let line_str = source.lines().nth(line).unwrap_or("");
 
+        let padding: String = line_str
+            .chars()
+            .take(column)
+            .map(|c| if c == '\t' { '\t' } else { ' ' })
+            .collect();
+
         let red = "\x1b[31;1m";
         let blue = "\x1b[34;1m";
         let green = "\x1b[32;1m";
@@ -46,7 +52,7 @@ impl VyprError {
         eprintln!("  {}-->{} {}{}:{}:{}{}", blue, reset, blue, filename, self.span.line, self.span.column, reset);
         eprintln!("   {}|{}", blue, reset);
         eprintln!("{}{:>2} |{} {}", blue, self.span.line, reset, line_str);
-        eprintln!("   {}|{} {}{}{}{}", blue, reset, " ".repeat(column), blue, "^".repeat(span_length), reset);
+        eprintln!("   {}|{} {}{}{}{}", blue, reset, padding, blue, "^".repeat(span_length), reset);
         eprintln!("   {}|{}", blue, reset);
 
         if let Some(help_msg) = &self.help {
