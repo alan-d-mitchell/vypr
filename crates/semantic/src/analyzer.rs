@@ -60,7 +60,7 @@ impl Analyzer {
         }
     }
 
-    fn error(&self, code: &'static str, message: impl Into<String>, span: Span) -> VyprError {
+    pub(crate) fn error(&self, code: &'static str, message: impl Into<String>, span: Span) -> VyprError {
         VyprError::new(code, message, span)
     }
 
@@ -251,12 +251,12 @@ impl Analyzer {
         Ok(())
     }
 
-    fn visit_expr(&self, expr: &Expr) -> Result<(), VyprError> {
+    fn visit_expr(&mut self, expr: &Expr) -> Result<(), VyprError> {
         self.infer_type(expr)?;
         Ok(())
     }
 
-    fn infer_type(&self, expr: &Expr) -> Result<TypeExpr, VyprError> {
+    pub(crate) fn infer_type(&mut self, expr: &Expr) -> Result<TypeExpr, VyprError> {
         let span = expr.span;
 
         match &expr.kind {
@@ -283,71 +283,48 @@ impl Analyzer {
                     _ => return Err(self.error("S005", "can only call named functions", span))
                 };
 
-                // Look up the function symbol
-                if let Some(sym) = self.resolve(func_name) {
-                    if let SymbolType::Function { params, return_type } = &sym.kind {
-                        let is_flexible = params.len() == 1 && params[0] == TypeExpr::Any;
+                let (params, return_type) = {
+                    let sym = match self.resolve(func_name) {
+                        Some(s) => s,
+                        None => return Err(self.error("S004", format!("undefined function '{}'", func_name), span)),
+                    };
 
-                        if !is_flexible {
-                            if args.len() != params.len() {
-                                return Err(self.error("S006", format!(
-                                    "function '{}' expects {} arguments, got {}", 
-                                    func_name, params.len(), args.len()
-                                ), span));
-                            }
-
-                            for (i, arg) in args.iter().enumerate() {
-                                let arg_type = self.infer_type(arg)?;
-                                let param_type = &params[i];
-
-                                if !self.types_match(param_type, &arg_type) {
-                                    return Err(self.error("S007", format!(
-                                        "type error in call to '{}': argument {} expected {}, got {}",
-                                        func_name, i + 1, param_type, arg_type
-                                    ), span));
-                                }
-                            }
-                        }
-
-                        Ok(return_type.clone())
-                    } else {
-                        Err(self.error("S008", format!("'{}' is not a function", func_name), span))
+                    match &sym.kind {
+                        SymbolType::Function { params, return_type } => (params.clone(), return_type.clone()),
+                        _ => return Err(self.error("S008", format!("'{}' is not a function", func_name), span)),
                     }
-                } else {
-                    Err(self.error("S004", format!("undefined function '{}'", func_name), span))
-                }
-            },
+                };
 
-            ExprKind::MethodCall { callee, args, method } => {
-                let callee_type = self.infer_type(callee)?;
+                let is_flexible = params.len() == 1 && params[0] == TypeExpr::Any;
 
-                match (callee_type, method.as_str()) {
-                    (TypeExpr::List(inner_type), "append") => { // check if they are calling .append() on a List
-                        if args.len() != 1 {
-                            return Err(
-                                self.error("S006", "append() takes exactly 1 argument", span)
-                                    .with_help("remove the extra argument")
-                            );
-                        }
+                if !is_flexible {
+                    if args.len() != params.len() {
+                        return Err(self.error("S006", format!(
+                            "function '{}' expects {} arguments, got {}", 
+                            func_name, params.len(), args.len()
+                        ), span));
+                    }
 
-                        let arg_type = self.infer_type(&args[0])?;
-                        
-                        if !self.types_match(&inner_type, &arg_type) {
+                    for (i, arg) in args.iter().enumerate() {
+                        let arg_type = self.infer_type(arg)?;
+                        let param_type = &params[i];
+
+                        if !self.types_match(param_type, &arg_type) {
                             return Err(self.error("S007", format!(
-                                "type error: cannot append {} to list[{}]", 
-                                arg_type, inner_type
+                                "type error in call to '{}': argument {} expected {}, got {}",
+                                func_name, i + 1, param_type, arg_type
                             ), span));
                         }
-
-                        Ok(TypeExpr::Any)
                     }
-
-                    (TypeExpr::Any, _) => {
-                        Ok(TypeExpr::Any)
-                    }
-
-                    (t, m) => Err(self.error("S009", format!("type {} has no method '{}'", t, m), span))
                 }
+
+                Ok(return_type.clone())
+            },
+            
+            // eventually need to migrate this match arm to a separate file called "methods.rs"
+            // that will just house all the built in methods i choose to implement for the primitive types
+            ExprKind::MethodCall { callee, args, method } => {
+                self.method_call(callee, args, method.as_str(), span)
             },
 
             ExprKind::Binary { left, operator, right } => {
@@ -463,6 +440,34 @@ impl Analyzer {
                 }
             }
 
+            ExprKind::ListComp { expr, var, iterator, condition } => {
+                let iterator_type = self.infer_type(iterator)?;
+
+                let item_type = match iterator_type {
+                    TypeExpr::List(inner) => *inner,
+                    TypeExpr::Atomic(TokenType::STR) => TypeExpr::Atomic(TokenType::STR),
+                    TypeExpr::Atomic(TokenType::RANGE) => TypeExpr::Atomic(TokenType::INT),
+                    TypeExpr::Atomic(TokenType::LIST) => TypeExpr::Any,
+                    TypeExpr::Any => TypeExpr::Any,
+                    
+                    _ => return Err(self.error("S018", format!("type error: type {} is not iterable", iterator_type), span))
+                };
+
+                self.enter_scope();
+
+                self.define(var.clone(), SymbolType::Locked(item_type), true);
+
+                if let Some(cond) = condition {
+                    self.infer_type(cond)?;
+                }
+                
+                let mapped_type = self.infer_type(expr)?;
+
+                self.exit_scope();
+
+                Ok(TypeExpr::List(Box::new(mapped_type)))
+            }
+
             ExprKind::Grouping(inner) => self.infer_type(inner),
 
             _ => Ok(TypeExpr::Any)
@@ -491,7 +496,7 @@ impl Analyzer {
         None
     }
 
-    fn types_match(&self, expected: &TypeExpr, actual: &TypeExpr) -> bool {
+    pub(crate) fn types_match(&self, expected: &TypeExpr, actual: &TypeExpr) -> bool {
         match (expected, actual) {
             (TypeExpr::Any, _) => true, 
             (_, TypeExpr::Any) => true,
