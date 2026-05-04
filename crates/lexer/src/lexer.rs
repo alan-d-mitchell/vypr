@@ -272,6 +272,9 @@ impl<'l> Lexer<'l> {
 
             _ => if c.is_ascii_digit() {
                 return self.scan_number(c);
+            } else if c == 'f' && (self.peek() == '"' || self.peek() == '\'') {
+                let quote = self.advance();
+                return self.scan_fstring(quote);
             } else if c.is_ascii_alphabetic() || c == '_' {
                 return self.scan_identifier(c);
             } else {
@@ -328,6 +331,47 @@ impl<'l> Lexer<'l> {
         }
 
         Err(self.error("L002", "unterminated string literal at EOF"))
+    }
+
+    fn scan_fstring(&mut self, quote: char) -> Result<Option<TokenType>, VyprError> {
+        let mut value = String::new();
+
+        while !self.is_at_end() {
+            let c = self.advance();
+
+            match c {
+                '\\' => {
+                    if self.is_at_end() {
+                        return Err(self.error("L002", "unterminated escape sequence in string literal"));
+                    }
+
+                    let escaped = self.advance();
+                    let escaped_char = match escaped {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        '\\' => '\\',
+                        '\'' => '\'',
+                        '"' => '"',
+
+                        _ => {
+                            return Err(self.error("L003", format!("unknown escape sequence \\{}", escaped)))
+                        }
+                    };
+
+                    value.push(escaped_char);
+                }
+
+                c if c == quote => {
+                    return Ok(Some(TokenType::FSTRING(value)));
+                }
+
+                '\n' => return Err(self.error("L002", "unterminated f-string (newline found)")),
+                _ => value.push(c),
+            }
+        }
+
+        Err(self.error("L002", "unterminated f-string at EOF"))
     }
 
     fn scan_number(&mut self, first: char) -> Result<Option<TokenType>, VyprError> {

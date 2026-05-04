@@ -193,9 +193,13 @@ impl Serializer {
             }
             OpCode::Length => buf.push(0x1D),
             OpCode::Invoke(name_idx, args) => {
-                buf.push(0x1E); // Next available hex tag
+                buf.push(0x1E);
                 buf.extend_from_slice(&(*name_idx as u32).to_be_bytes());
                 buf.push(*args as u8);
+            }
+            OpCode::FormatString(count) => {
+                buf.push(0x1F);
+                buf.extend_from_slice(&(*count as u32).to_be_bytes());
             }
         }
     }

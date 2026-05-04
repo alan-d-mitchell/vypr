@@ -35,6 +35,7 @@ pub enum OpCode {
 
     Call(usize),
     Invoke(usize, usize),   
+    FormatString(usize),
     Return,
 }
 

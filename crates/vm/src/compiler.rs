@@ -503,6 +503,16 @@ impl Compiler {
                     self.locals.pop();
                 }            
             }
+
+            ExprKind::FString(parts) => {
+                let part_count = parts.len();
+
+                for part in parts {
+                    self.compile_expr(part)?;
+                }
+
+                self.chunk.write(OpCode::FormatString(part_count), span);
+            }
         }
 
         Ok(())
@@ -541,6 +551,7 @@ impl Compiler {
                 OpCode::Loop(_) | OpCode::Length => 0,
                 OpCode::BuildList(count) => -(*count as isize) + 1,
                 OpCode::Call(arg_count) | OpCode::Invoke(_, arg_count) => -(*arg_count as isize),
+                OpCode::FormatString(count) => -(*count as isize) + 1,
                 OpCode::Return => 0,
             };
             depth += effect;

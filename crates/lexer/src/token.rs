@@ -36,6 +36,7 @@ pub enum TokenType {
     INT_LITERAL(i64),
     FLOAT_LITERAL(f64),
     STR_LITERAL(String),
+    FSTRING(String),
     IDENTIFIER(String),
 
     // OPERATORS

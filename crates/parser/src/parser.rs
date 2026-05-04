@@ -1,5 +1,6 @@
 use error::error::{Span, VyprError};
 use lexer::token::{Token, TokenType};
+use lexer::lexer::Lexer;
 use crate::ast::{Param, TypeExpr, StmtKind, ExprKind};
 
 use super::ast::{Stmt, Expr};
@@ -350,6 +351,72 @@ impl<'p> Parser<'p> {
             span 
         })
     }
+    
+    fn fstring_literal(&mut self, s: String) -> Result<ExprKind, VyprError> {
+        let mut parts = Vec::new();
+        let mut chars = s.chars().peekable();
+        let mut current_text = String::new();
+
+        while let Some(c) = chars.next() {
+            if c == '{' {
+                if !current_text.is_empty() {
+                    parts.push(Expr {
+                        kind: ExprKind::Literal(TokenType::STR_LITERAL(current_text.clone())),
+                        span: self.previous().span, 
+                    });
+                    current_text.clear();
+                }
+
+                let mut expr_str = String::new();
+                let mut brace_depth = 1;
+                
+                while let Some(&next_c) = chars.peek() {
+                    if next_c == '{' { brace_depth += 1; }
+                    if next_c == '}' {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            chars.next();
+                            break;
+                        }
+                    }
+                    expr_str.push(chars.next().unwrap());
+                }
+
+                if brace_depth > 0 {
+                    return Err(self.make_error("P017", "unterminated '{' in f-string"));
+                }
+
+                if expr_str.trim().is_empty() {
+                    return Err(self.make_error("P018", "empty expression inside f-string"));
+                }
+
+                let mut inner_lexer = Lexer::new(&expr_str);
+                let inner_tokens = inner_lexer.tokenize();
+                
+                if !inner_lexer.errors.is_empty() {
+                    return Err(self.make_error("P019", "invalid syntax inside f-string"));
+                }
+
+                let mut inner_parser = Parser::new(inner_tokens);
+                let inner_expr = inner_parser.expression().map_err(|_| {
+                    self.make_error("P019", "invalid syntax inside f-string")
+                })?;
+
+                parts.push(inner_expr);
+            } else {
+                current_text.push(c);
+            }
+        }
+
+        if !current_text.is_empty() {
+            parts.push(Expr {
+                kind: ExprKind::Literal(TokenType::STR_LITERAL(current_text)),
+                span: self.previous().span,
+            });
+        }
+
+        Ok(ExprKind::FString(parts))
+    }
 
     fn list_literal(&mut self) -> Result<ExprKind, VyprError> {
         if self.match_token(TokenType::RBRACKET) {
@@ -682,6 +749,7 @@ impl<'p> Parser<'p> {
             TokenType::INT => ExprKind::Variable("int".to_string()),
             TokenType::FLOAT => ExprKind::Variable("float".to_string()),
             TokenType::STR => ExprKind::Variable("str".to_string()),
+            TokenType::FSTRING(s) => self.fstring_literal(s)?,
             TokenType::BOOL => ExprKind::Variable("bool".to_string()),
             TokenType::LIST => ExprKind::Variable("list".to_string()),
             TokenType::RANGE => ExprKind::Variable("range".to_string()),

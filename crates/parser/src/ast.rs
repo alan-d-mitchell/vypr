@@ -131,5 +131,7 @@ pub enum ExprKind {
         var: String,
         iterator: Box<Expr>,
         condition: Option<Box<Expr>>,
-    }
+    },
+
+    FString(Vec<Expr>),
 }

@@ -507,6 +507,31 @@ impl VM {
                     }
                 }
 
+                OpCode::FormatString(count) => {
+                    let mut parts = Vec::with_capacity(count);
+
+                    for _ in 0..count {
+                        parts.push(self.pop()?);
+                    }
+
+                    parts.reverse();
+
+                    let mut formatted = String::new();
+                    for part in parts {
+                        match part {
+                            Value::Str(s) => formatted.push_str(&s),
+                            Value::Int(i) => formatted.push_str(&i.to_string()),
+                            Value::Float(f) => formatted.push_str(&f.to_string()),
+                            Value::Bool(b) => formatted.push_str(if b { "true" } else { "false" }),
+                            Value::List(_) | Value::Range(_, _) => formatted.push_str(&part.to_string()),
+                            Value::None => formatted.push_str("None"),
+                            _ => return Err(self.error("R002", "cannot format this type"))
+                        }
+                    }
+
+                    self.push(Value::Str(formatted))
+                }
+
                 OpCode::Return => {
                     let result = self.pop().unwrap_or(Value::None);
                     let frame = self.frames.pop().unwrap();
