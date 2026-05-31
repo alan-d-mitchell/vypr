@@ -1,29 +1,20 @@
 use crate::value::Value;
-use std::{arch::asm, cell::RefCell, rc::Rc};
+use std::{arch::asm, cell::RefCell, io::{self, Write}, rc::Rc};
 
 pub fn vypr_print(args: &[Value]) -> Value {
+    let mut stdout = io::stdout().lock();
+
     for (i, arg) in args.iter().enumerate() {
-        // Convert the value to a string
-        let s = arg.to_string(); 
-        
-        // Pass the raw bytes and length to our ASM wrapper
-        // File Descriptor 1 = STDOUT
-        unsafe {
-            sys_write(1, s.as_ptr(), s.len());
-        }
+        let s = arg.to_string();
+        let _ = stdout.write_all(s.as_bytes());
 
-        // Print a space separator if not the last argument
         if i < args.len() - 1 {
-            unsafe { 
-                sys_write(1, " ".as_ptr(), 1); 
-            }
+            let _ = stdout.write_all(b" ");
         }
     }
 
-    // Print a newline at the end
-    unsafe { 
-        sys_write(1, "\n".as_ptr(), 1); 
-    }
+    let _ = stdout.write_all(b"\n");
+    let _ = stdout.flush();
 
     Value::None
 }
