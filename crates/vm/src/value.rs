@@ -19,6 +19,24 @@ pub enum DataType {
 
 pub type NativeFn = fn(&[Value]) -> Value;
 
+#[derive(Clone)]
+pub struct NativeFunction {
+    pub name: String,
+    pub function: NativeFn,
+}
+
+impl PartialEq for NativeFunction {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl fmt::Debug for NativeFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<built-in function {}>", self.name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
@@ -28,8 +46,8 @@ pub enum Value {
     List(Rc<RefCell<Vec<Value>>>),
     Range(i64, i64),
     None,
-    Native(NativeFn),
-    Function(Box<Chunk>),
+    Native(NativeFunction),
+    Function(usize, Box<Chunk>),
 }
 
 impl Value {
@@ -42,7 +60,7 @@ impl Value {
             Value::Str(_) => DataType::Str,
             Value::List(_) => DataType::List,
             Value::None => DataType::None,
-            Value::Native(_) | Value::Function(_) => DataType::Function,
+            Value::Native(_) | Value::Function(_, _) => DataType::Function,
             Value::Range(_, _) => DataType::Range,
         }
     }
@@ -54,22 +72,30 @@ impl Value {
             Value::Int(i) => *i != 0,
             Value::Float(f) => *f != 0.0,
             Value::Str(s) => !s.is_empty(),
-            Value::Range(start, stop) => start > stop,
+            Value::Range(start, stop) => start < stop,
             _ => true,
         }
     }
 
     pub fn repr(&self) -> String {
+        self.repr_inner(0)
+    }
+
+    pub fn repr_inner(&self, depth: usize) -> String {
+        if depth > 100 {
+            return "[...]".to_string();
+        }
+
         match self {
             Value::Str(s) => format!("'{}'", s),
             Value::List(items) => {
                 let borrowed = items.borrow();
-                let elements: Vec<String> = borrowed.iter().map(|v| v.repr()).collect();
+                let elements: Vec<String> = borrowed.iter().map(|v| v.repr_inner(depth + 1)).collect();
 
-                format!("[{}]", elements.join(", "))
+                return format!("[{}]", elements.join(", "));
             },
 
-            _ => format!("{}", self)
+            _ => return format!("{}", self)
         }
     }
 }
@@ -87,11 +113,11 @@ impl fmt::Display for Value {
             }
             Value::Bool(v) => write!(f, "{}", v),
             Value::Str(v) => write!(f, "{}", v),
-            Value::List(_) => write!(f, "{}", self.repr()),
+            Value::List(_) => write!(f, "{}", self.repr_inner(0)),
             Value::Range(start, stop) => write!(f, "range({}, {})", start, stop),
             Value::None => write!(f, "None"),
-            Value::Native(_) => write!(f, "<native fn>"),
-            Value::Function(_) => write!(f, "<fn>"),
+            Value::Native(function) => write!(f, "<built-in function {}>", function.name),
+            Value::Function(_, _) => write!(f, "<fn>"),
         }
     }
 }

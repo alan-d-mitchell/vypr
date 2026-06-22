@@ -277,50 +277,56 @@ impl Analyzer {
                 }
             },
 
-            ExprKind::Call { callee, args } => {
-                let func_name = match &callee.kind {
-                    ExprKind::Variable(name) => name,
-                    _ => return Err(self.error("S005", "can only call named functions", span))
-                };
-
-                let (params, return_type) = {
-                    let sym = match self.resolve(func_name) {
-                        Some(s) => s,
-                        None => return Err(self.error("S004", format!("undefined function '{}'", func_name), span)),
-                    };
-
-                    match &sym.kind {
-                        SymbolType::Function { params, return_type } => (params.clone(), return_type.clone()),
-                        _ => return Err(self.error("S008", format!("'{}' is not a function", func_name), span)),
-                    }
-                };
-
-                let is_flexible = params.len() == 1 && params[0] == TypeExpr::Any;
-
-                if !is_flexible {
-                    if args.len() != params.len() {
-                        return Err(self.error("S006", format!(
-                            "function '{}' expects {} arguments, got {}", 
-                            func_name, params.len(), args.len()
-                        ), span));
-                    }
-
-                    for (i, arg) in args.iter().enumerate() {
-                        let arg_type = self.infer_type(arg)?;
-                        let param_type = &params[i];
-
-                        if !self.types_match(param_type, &arg_type) {
-                            return Err(self.error("S007", format!(
-                                "type error in call to '{}': argument {} expected {}, got {}",
-                                func_name, i + 1, param_type, arg_type
-                            ), span));
+           ExprKind::Call { callee, args } => {
+                if let ExprKind::Variable(func_name) = &callee.kind {
+                    let signature = self.resolve(func_name).and_then(|sym| {
+                        if let SymbolType::Function { params, return_type } = &sym.kind {
+                            Some((params.clone(), return_type.clone()))
+                        } else {
+                            None
                         }
+                    });
+
+                    if let Some((params, return_type)) = signature {
+                        let is_flexible = params.len() == 1 && params[0] == TypeExpr::Any;
+
+                        if !is_flexible {
+                            if args.len() != params.len() {
+                                return Err(self.error("S006", format!(
+                                    "function '{}' expects {} arguments, got {}", 
+                                    func_name, params.len(), args.len()
+                                ), span));
+                            }
+
+                            for (i, arg) in args.iter().enumerate() {
+                                let arg_type = self.infer_type(arg)?; 
+                                let param_type = &params[i];
+
+                                if !self.types_match(param_type, &arg_type) {
+                                    return Err(self.error("S007", format!(
+                                        "type error: argument {} expected {}, got {}",
+                                        i + 1, param_type, arg_type
+                                    ), span));
+                                }
+                            }
+                        }
+
+                        return Ok(return_type);
                     }
                 }
 
-                Ok(return_type.clone())
-            },
-            
+                let callee_type = self.infer_type(callee)?;
+
+                if callee_type == TypeExpr::Any {
+                    for arg in args {
+                        self.infer_type(arg)?;
+                    }
+                    return Ok(TypeExpr::Any);
+                }
+
+                Err(self.error("S008", "cannot verify signatures of callee", span))
+            }, 
+
             // eventually need to migrate this match arm to a separate file called "methods.rs"
             // that will just house all the built in methods i choose to implement for the primitive types
             ExprKind::MethodCall { callee, args, method } => {
@@ -469,6 +475,14 @@ impl Analyzer {
             }
 
             ExprKind::Grouping(inner) => self.infer_type(inner),
+
+            ExprKind::FString(parts) => {
+                for part in parts {
+                    self.infer_type(part)?;
+                }
+
+                Ok(TypeExpr::Atomic(TokenType::STR))
+            }
 
             _ => Ok(TypeExpr::Any)
         }

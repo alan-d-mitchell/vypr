@@ -37,8 +37,7 @@ impl VyprError {
 
         let line_str = source.lines().nth(line).unwrap_or("");
 
-        let padding: String = line_str
-            .chars()
+        let padding: String = line_str.chars()
             .take(column)
             .map(|c| if c == '\t' { '\t' } else { ' ' })
             .collect();
@@ -50,13 +49,14 @@ impl VyprError {
 
         eprintln!("\n{}error[{}]{}\n{}", red, self.code, reset, self.message);
         eprintln!("  {}-->{} {}{}:{}:{}{}", blue, reset, blue, filename, self.span.line, self.span.column, reset);
-        eprintln!("   {}|{}", blue, reset);
-        eprintln!("{}{:>2} |{} {}", blue, self.span.line, reset, line_str);
-        eprintln!("   {}|{} {}{}{}{}", blue, reset, padding, blue, "^".repeat(span_length), reset);
-        eprintln!("   {}|{}", blue, reset);
+        
+        eprintln!("    {}|{}", blue, reset);
+        eprintln!("{}{:>3} |{} {}", blue, self.span.line, reset, line_str);
+        eprintln!("    {}| {}{}{}{}{}", blue, reset, padding, red, "^".repeat(span_length), reset);
 
-        if let Some(help_msg) = &self.help {
-            eprintln!("     {}= help: {}{}", green, help_msg, reset);
+        if let Some(help) = &self.help {
+            eprintln!("    {}|{}", blue, reset);
+            eprintln!("    {}={} {}help: {}{}", blue, reset, green, reset, help);
         }
     }
 }

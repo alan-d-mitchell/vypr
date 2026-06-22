@@ -100,7 +100,7 @@ impl Serializer {
                 // Cannot serialize native functions
                 self.file.write_all(&[0x05])?; // Write None placeholder
             }
-            Value::Function(chunk) => {
+            Value::Function(_, chunk) => {
                 self.file.write_all(&[0x06])?;
                 // Recursive serialization for function bodies
                 self.write_chunk(chunk)?;

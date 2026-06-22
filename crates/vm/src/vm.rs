@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use error::error::{Span, VyprError};
 
-use crate::{bytecode::{Chunk, OpCode}, value::{Value, DataType}};
+use crate::{builtins, bytecode::{Chunk, OpCode}, value::{self, DataType, Value}};
 
 #[derive(Clone)]
 struct GlobalVar {
@@ -27,38 +27,59 @@ impl VM {
         let mut globals = HashMap::new();
 
         globals.insert("print".to_string(), GlobalVar {
-            value: Value::Native(crate::builtins::vypr_print),
+            value: Value::Native(value::NativeFunction {
+                name: "print".to_string(),
+                function: builtins::vypr_print
+            }),
             lock: DataType::Function,
         });
 
         globals.insert("int".to_string(), GlobalVar {
-            value: Value::Native(crate::builtins::vypr_int),
-            lock: DataType::Function,
+            value: Value::Native(value::NativeFunction {
+                name: "int".to_string(),
+                function: builtins::vypr_int
+            }),
+            lock: DataType::Function
         });
 
         globals.insert("float".to_string(), GlobalVar {
-            value: Value::Native(crate::builtins::vypr_float),
-            lock: DataType::Function,
+            value: Value::Native(value::NativeFunction {
+                name: "float".to_string(),
+                function: builtins::vypr_float
+            }),
+            lock: DataType::Function
         });
 
         globals.insert("str".to_string(), GlobalVar {
-            value: Value::Native(crate::builtins::vypr_str),
-            lock: DataType::Function,
+            value: Value::Native(value::NativeFunction {
+                name: "str".to_string(),
+                function: builtins::vypr_str
+            }),
+            lock: DataType::Function
         });
 
         globals.insert("len".to_string(), GlobalVar {
-            value: Value::Native(crate::builtins::vypr_len),
-            lock: DataType::Function,
+            value: Value::Native(value::NativeFunction {
+                name: "len".to_string(),
+                function: builtins::vypr_len
+            }),
+            lock: DataType::Function
         });
 
         globals.insert("range".to_string(), GlobalVar {
-            value: Value::Native(crate::builtins::vypr_range),
-            lock: DataType::Function,
+            value: Value::Native(value::NativeFunction {
+                name: "range".to_string(),
+                function: builtins::vypr_range
+            }),
+            lock: DataType::Function
         });
 
         globals.insert("list".to_string(), GlobalVar {
-            value: Value::Native(crate::builtins::vypr_list),
-            lock: DataType::Function,
+            value: Value::Native(value::NativeFunction {
+                name: "list".to_string(),
+                function: builtins::vypr_list
+            }),
+            lock: DataType::Function
         });
 
         let main_frame = CallFrame {
@@ -113,10 +134,36 @@ impl VM {
                     let name = self.read_string(name_idx)?;
                     let val = self.pop()?;
                     
-                    self.globals.insert(name, GlobalVar {
-                        value: val,
-                        lock: type_lock, // Use the lock from the bytecode
-                    });
+                    let mut should_error = false;
+                    let mut existing_lock = DataType::Any;
+                    
+                    if let Some(existing) = self.globals.get(&name) {
+                        existing_lock = existing.lock;
+
+                        if existing_lock != DataType::Any && val.get_type() != existing_lock {
+                            should_error = true;
+                        }
+                    }
+
+                    if should_error {
+                        return Err(self.error("R002", format!(
+                            "type error: variable '{}' is locked to {:?}, but got {:?}", 
+                            name, existing_lock, val.get_type()
+                        )));
+                    }
+
+                    if let Some(existing) = self.globals.get_mut(&name) {
+                        existing.value = val;
+
+                        if type_lock != DataType::Any {
+                            existing.lock = type_lock; 
+                        }
+                    } else {
+                        self.globals.insert(name, GlobalVar {
+                            value: val,
+                            lock: type_lock,
+                        });
+                    }
                 }
 
                 OpCode::GetGlobal(name_idx) => {
@@ -340,7 +387,7 @@ impl VM {
                                 return Err(self.error("R007", "division by zero"));
                             }
 
-                            self.push(Value::Int(a / b)) // Integer division
+                            self.push(Value::Float(a as f64 / b as f64)) // Integer division
                         }
                         (Value::Float(a), Value::Float(b)) => {
                             self.push(Value::Float(a / b))
@@ -567,7 +614,7 @@ impl VM {
         let callee = self.stack[func_idx].clone();
 
         match callee {
-            Value::Native(func) => {
+            Value::Native(native) => {
                 let mut args = Vec::new();
 
                 for _ in 0..arg_count {
@@ -577,13 +624,20 @@ impl VM {
 
                 self.pop()?;
 
-                let result = func(&args);
+                let result = (native.function)(&args);
                 self.push(result);
 
                 Ok(())
             }
 
-            Value::Function(chunk) => {
+            Value::Function(arity, chunk) => {
+                if arg_count != arity {
+                    return Err(self.error("R008", format!(
+                        "function expected {} arguments but got {}", 
+                        arity, arg_count
+                    )));
+                }
+
                 let mut args = Vec::new();
                 
                 for _ in 0..arg_count {

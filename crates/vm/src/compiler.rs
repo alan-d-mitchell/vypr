@@ -14,6 +14,7 @@ struct Local {
 struct LoopState {
     continue_jumps: Vec<usize>,
     break_jumps: Vec<usize>,
+    scope_depth: usize,
 }
 
 pub struct Compiler {
@@ -94,37 +95,30 @@ impl Compiler {
             }
 
             StmtKind::If { condition, then, else_b } => {
-                // 1. Compile Condition
                 self.compile_expr(condition)?;
 
-                // 2. Emit JumpIfFalse (Skip 'then' if false)
                 let then_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                
-                // 3. Pop the condition (since JumpIfFalse leaves it on stack)
                 self.chunk.write(OpCode::Pop, span); 
 
-                // 4. Compile 'then' block
+                self.enter_scope();
                 for s in then {
                     self.compile_stmt(s)?;
                 }
+                self.exit_scope();
 
-                // 5. Emit Jump (Skip 'else' after finishing 'then')
                 let else_jump = self.emit_jump(OpCode::Jump, span);
-
-                // 6. PATCH 'then_jump' (This is where false condition lands)
                 self.patch_jump(then_jump)?;
 
-                // 7. Pop condition (on the else path)
                 self.chunk.write(OpCode::Pop, span); 
 
-                // 8. Compile 'else' block
                 if let Some(branch) = else_b {
+                    self.enter_scope();
                     for s in branch {
                         self.compile_stmt(s)?;
                     }
+                    self.exit_scope();
                 }
 
-                // 9. PATCH 'else_jump' (This is where 'then' block finishes)
                 self.patch_jump(else_jump)?;
             }
 
@@ -151,6 +145,7 @@ impl Compiler {
                 self.loop_stack.push(LoopState {
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    scope_depth: self.scope_depth,
                 });
 
                 self.chunk.write(OpCode::GetLocal(index_slot), span); 
@@ -199,6 +194,7 @@ impl Compiler {
                 self.loop_stack.push(LoopState {
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    scope_depth: self.scope_depth,
                 });
 
                 self.compile_expr(condition)?;
@@ -206,9 +202,11 @@ impl Compiler {
                 let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
                 self.chunk.write(OpCode::Pop, span);
 
+                self.enter_scope();
                 for s in body {
                     self.compile_stmt(s)?;
                 }
+                self.exit_scope();
 
                 let current_loop = self.loop_stack.pop().unwrap();
 
@@ -220,21 +218,18 @@ impl Compiler {
 
                 self.patch_jump(exit_jump)?;
 
-                // 7. Pop condition (when exiting loop)
                 self.chunk.write(OpCode::Pop, span);
 
-                // Patch Breaks (Lands completely outside the loop!)
                 for break_jump in current_loop.break_jumps {
                     self.patch_jump(break_jump)?;
                 }
             }
 
             StmtKind::FuncDecl { name, body, params, .. } => {
-                // 1. Create a new compiler for the function body
                 let mut func_compiler = Compiler::new();
                 func_compiler.scope_depth = 1;
 
-                for param in params {
+                for param in &params {
                     func_compiler.add_local(param.name.clone());
                 }
 
@@ -246,7 +241,7 @@ impl Compiler {
                 func_compiler.chunk.write(OpCode::Return, span);
 
                 let func_chunk = func_compiler.chunk;
-                let func_val = Value::Function(Box::new(func_chunk));
+                let func_val = Value::Function(params.len(), Box::new(func_chunk));
                 self.emit_constant(func_val, span);
 
                 let name_idx = self.make_constant(Value::Str(name));
@@ -272,6 +267,15 @@ impl Compiler {
                     return Err(self.error("C004", "'break' outside loop", span));
                 }
 
+                let loop_depth = self.loop_stack.last().unwrap().scope_depth;
+                for local in self.locals.iter().rev() {
+                    if local.depth > loop_depth {
+                        self.chunk.write(OpCode::Pop, span);
+                    } else {
+                        break;
+                    }
+                }
+
                 let jump = self.emit_jump(OpCode::Jump, span);
 
                 self.loop_stack.last_mut().unwrap().break_jumps.push(jump);
@@ -280,6 +284,15 @@ impl Compiler {
             StmtKind::Continue => {
                 if self.loop_stack.is_empty() {
                     return Err(self.error("C005", "'continue' outside loop", span));
+                }
+
+                let loop_depth = self.loop_stack.last().unwrap().scope_depth;
+                for local in self.locals.iter().rev() {
+                    if local.depth > loop_depth {
+                        self.chunk.write(OpCode::Pop, span);
+                    } else {
+                        break;
+                    }
                 }
 
                 let jump = self.emit_jump(OpCode::Jump, span);

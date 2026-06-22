@@ -158,7 +158,6 @@ impl Chunk {
         let mut s = String::new();
         writeln!(&mut s, "== {} ==", name).unwrap();
 
-        // Pass 1: Scan for Labels (unchanged)
         let mut targets = BTreeSet::new();
         for (i, op) in self.code.iter().enumerate() {
             match op {
@@ -172,7 +171,6 @@ impl Chunk {
             }
         }
 
-        // Pass 2: Print Instructions (unchanged)
         for (i, op) in self.code.iter().enumerate() {
             if targets.contains(&i) {
                 writeln!(&mut s, "L{:04}:", i).unwrap();
@@ -184,10 +182,30 @@ impl Chunk {
                     let val = &self.constants[*idx];
                     writeln!(&mut s, "{:<16} {:4} '{}'", "CONSTANT", idx, val).unwrap();
                 }
+
                 OpCode::DefineGlobal(idx, dtype) => {
                     let val = &self.constants[*idx];
                     writeln!(&mut s, "{:<16} {:4} '{}' (Type: {:?})", "DEFINE_GLOBAL", idx, val, dtype).unwrap();
                 }
+                OpCode::GetGlobal(idx) => {
+                    let name = &self.constants[*idx];
+                    writeln!(&mut s, "{:<16} {:4} '{}'", "GET_GLOBAL", idx, name).unwrap();
+                }
+                OpCode::SetGlobal(idx) => {
+                    let name = &self.constants[*idx];
+                    writeln!(&mut s, "{:<16} {:4} '{}'", "SET_GLOBAL", idx, name).unwrap();
+                }
+
+                OpCode::Invoke(idx, arg_count) => {
+                    let name = &self.constants[*idx];
+                    writeln!(&mut s, "{:<16} {:4} '{}' (args: {})", "INVOKE", idx, name, arg_count).unwrap();
+                }
+
+                OpCode::GetLocal(idx) => writeln!(&mut s, "{:<16} {:4}", "GET_LOCAL", idx).unwrap(),
+                OpCode::SetLocal(idx) => writeln!(&mut s, "{:<16} {:4}", "SET_LOCAL", idx).unwrap(),
+                OpCode::Call(arg_count) => writeln!(&mut s, "{:<16} {:4}", "CALL", arg_count).unwrap(),
+                OpCode::BuildList(count) => writeln!(&mut s, "{:<16} {:4}", "BUILD_LIST", count).unwrap(),
+
                 OpCode::LessEqual => writeln!(&mut s, "LESS_EQUAL").unwrap(),
                 OpCode::GreaterEqual => writeln!(&mut s, "GREATER_EQUAL").unwrap(),
                 
@@ -196,18 +214,18 @@ impl Chunk {
                     writeln!(&mut s, "{:<16} -> L{:04}", "LOOP", target).unwrap();
                 }
 
+                OpCode::Pop => {
+                    writeln!(&mut s, "POP").unwrap();
+                }
+
                 _ => writeln!(&mut s, "{:?}", op).unwrap(),
             }
         }
 
         for (i, constant) in self.constants.iter().enumerate() {
-            if let Value::Function(chunk) = constant {
-                writeln!(&mut s, "").unwrap(); // Empty line for spacing
+            if let Value::Function(_, chunk) = constant {
+                writeln!(&mut s, "").unwrap();
                 
-                // Try to find the name of this function.
-                // Usually, the name is stored in the constant pool right AFTER the function object
-                // because of how we compiled it (emit_constant(func); make_constant(name)).
-                // This is a bit of a heuristic, but works for display.
                 let func_name = if i + 1 < self.constants.len() {
                     match &self.constants[i + 1] {
                         Value::Str(name) => name.clone(),
@@ -217,7 +235,6 @@ impl Chunk {
                     format!("<fn {}>", i)
                 };
 
-                // RECURSIVE CALL
                 let inner_output = chunk.disassemble(&func_name);
                 s.push_str(&inner_output);
             }

@@ -457,6 +457,7 @@ impl<'l> Lexer<'l> {
             "str" => TokenType::STR,
             "list" => TokenType::LIST,
             "range" => TokenType::RANGE,
+            "dict" => TokenType::DICT,
 
             // KEYWORDS
             "def" => TokenType::DEF,
@@ -476,6 +477,7 @@ impl<'l> Lexer<'l> {
             "True" => TokenType::TRUE,
             "False" => TokenType::FALSE,
             "None" => TokenType::NONE,
+            "import" => TokenType::IMPORT,
 
             _ => TokenType::IDENTIFIER(text.to_string())
         }

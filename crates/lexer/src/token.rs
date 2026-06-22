@@ -18,6 +18,7 @@ pub enum TokenType {
     TRUE,
     FALSE,
     NONE,
+    IMPORT,
 
     // TYPES
     INT,
@@ -26,6 +27,7 @@ pub enum TokenType {
     STR,
     LIST,
     RANGE,
+    DICT,
 
     // LOGICAL
     AND,

@@ -115,6 +115,10 @@ impl<'p> Parser<'p> {
             });
         }
 
+        if self.match_token(TokenType::IMPORT) {
+            return self.import_statement();
+        }
+
         if let TokenType::IDENTIFIER(name) = self.peek().kind {
             if self.check_identifier() {
                 let span = self.peek().span;
@@ -125,6 +129,25 @@ impl<'p> Parser<'p> {
         }
 
         self.expression_statement()
+    }
+
+    fn import_statement(&mut self) -> Result<Stmt<'p>, VyprError> {
+        let span = self.previous().span;
+        let token = self.consume(TokenType::IDENTIFIER("".to_string()), "expected module name")?;
+
+        let module_name = match token.kind {
+            TokenType::IDENTIFIER(name) => name,
+            _ => return Err(self.make_error("P020", "expected module name")),
+        };
+
+        self.match_token(TokenType::SEMICOLON);
+
+        Ok(Stmt {
+            kind: StmtKind::Import {
+                module: module_name,
+            },
+            span
+        })
     }
 
     fn parse_type_annotation(&mut self) -> Result<TypeExpr, VyprError> {
@@ -369,16 +392,27 @@ impl<'p> Parser<'p> {
 
                 let mut expr_str = String::new();
                 let mut brace_depth = 1;
+                let mut in_string = None;
                 
                 while let Some(&next_c) = chars.peek() {
-                    if next_c == '{' { brace_depth += 1; }
-                    if next_c == '}' {
-                        brace_depth -= 1;
-                        if brace_depth == 0 {
-                            chars.next();
-                            break;
+                    if let Some(quote) = in_string {
+                        if next_c == quote {
+                            in_string = None;
+                        }
+                    } else {
+                        if next_c == '"' || next_c == '\'' { 
+                            in_string = Some(next_c); 
+                        } else if next_c == '{' { 
+                            brace_depth += 1; 
+                        } else if next_c == '}' {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                chars.next();
+                                break;
+                            }
                         }
                     }
+
                     expr_str.push(chars.next().unwrap());
                 }
 

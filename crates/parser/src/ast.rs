@@ -79,6 +79,10 @@ pub enum StmtKind<'s> {
         body: Vec<Stmt<'s>>
     },
 
+    Import {
+        module: String,
+    },
+
     Pass,
     Break,
     Continue,
