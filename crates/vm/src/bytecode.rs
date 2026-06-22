@@ -37,6 +37,8 @@ pub enum OpCode {
     Invoke(usize, usize),   
     FormatString(usize),
     Return,
+
+    Import(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -216,6 +218,10 @@ impl Chunk {
 
                 OpCode::Pop => {
                     writeln!(&mut s, "POP").unwrap();
+                }
+
+                OpCode::Import(idx) => {
+                    writeln!(&mut s, "{:<16} {:4}", "IMPORT", idx).unwrap();
                 }
 
                 _ => writeln!(&mut s, "{:?}", op).unwrap(),

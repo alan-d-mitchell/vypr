@@ -5,3 +5,4 @@ pub mod serializer;
 pub mod value;
 pub mod methods;
 pub mod vm;
+pub mod stdlib;

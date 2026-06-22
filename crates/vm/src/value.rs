@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -15,6 +16,7 @@ pub enum DataType {
     None,
     Function,
     Any,
+    Module,
 }
 
 pub type NativeFn = fn(&[Value]) -> Value;
@@ -37,6 +39,18 @@ impl fmt::Debug for NativeFunction {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub name: String,
+    pub exports: HashMap<String, Value>,
+}
+
+impl PartialEq for Module {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
@@ -48,6 +62,8 @@ pub enum Value {
     None,
     Native(NativeFunction),
     Function(usize, Box<Chunk>),
+    UnloadedModule(String),
+    Module(Rc<Module>),
 }
 
 impl Value {
@@ -62,6 +78,7 @@ impl Value {
             Value::None => DataType::None,
             Value::Native(_) | Value::Function(_, _) => DataType::Function,
             Value::Range(_, _) => DataType::Range,
+            Value::UnloadedModule(_) | Value::Module(_) => DataType::Module,
         }
     }
 
@@ -118,6 +135,9 @@ impl fmt::Display for Value {
             Value::None => write!(f, "None"),
             Value::Native(function) => write!(f, "<built-in function {}>", function.name),
             Value::Function(_, _) => write!(f, "<fn>"),
+            
+            Value::Module(m) => write!(f, "<module {}>", m.name),
+            Value::UnloadedModule(name) => write!(f, "<unloaded module {}>", name),
         }
     }
 }

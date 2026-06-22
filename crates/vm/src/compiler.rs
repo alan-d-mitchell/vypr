@@ -298,6 +298,16 @@ impl Compiler {
                 let jump = self.emit_jump(OpCode::Jump, span);
                 self.loop_stack.last_mut().unwrap().continue_jumps.push(jump); 
             }
+
+            StmtKind::Import { module } => {
+                let name_idx = self.chunk.add_constant(Value::Str(module.clone()));
+                
+                // 1. VM searches the standard library and pushes the Module object to the stack
+                self.chunk.write(OpCode::Import(name_idx), span);
+                
+                // 2. VM pops the stack and saves it as a variable named "time"
+                self.chunk.write(OpCode::DefineGlobal(name_idx, DataType::Any), span);
+            }
         }
 
         Ok(())
@@ -566,6 +576,7 @@ impl Compiler {
                 OpCode::Call(arg_count) | OpCode::Invoke(_, arg_count) => -(*arg_count as isize),
                 OpCode::FormatString(count) => -(*count as isize) + 1,
                 OpCode::Return => 0,
+                OpCode::Import(_) => 1,
             };
             depth += effect;
         }

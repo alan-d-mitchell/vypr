@@ -168,11 +168,26 @@ impl VM {
 
                 OpCode::GetGlobal(name_idx) => {
                     let name = self.read_string(name_idx)?;
+                    let mut module_to_load = None;
 
-                    match self.globals.get(&name) {
-                        Some(global) => self.push(global.value.clone()),
-                        None => return Err(self.error("R001", format!("undefined variable '{}'", name))),
+                    if let Some(global) = self.globals.get(&name) {
+                        if let Value::UnloadedModule(mod_name) = &global.value {
+                            module_to_load = Some(mod_name.clone());
+                        }
+                    } else {
+                        return Err(self.error("R001", format!("undefined variable '{}'", name)));
                     }
+
+                    if let Some(mod_name) = module_to_load {
+                        if let Some(loaded_module) = crate::stdlib::load_module(&mod_name) {
+                            self.globals.get_mut(&name).unwrap().value = loaded_module; 
+                        } else {
+                            return Err(self.error("R009", format!("module not found: no module named '{}'", mod_name)));
+                        }
+                    }
+
+                    let final_val = self.globals.get(&name).unwrap().value.clone();
+                    self.push(final_val);
                 }
 
                 OpCode::SetGlobal(name_idx) => {
@@ -219,6 +234,36 @@ impl VM {
                 }
 
                 OpCode::Invoke(name_idx, arg_count) => {
+                    let method_name = self.read_string(name_idx)?;
+
+                    // Peek down the stack to find the object we are calling the method on
+                    let obj_idx = self.stack.len() - 1 - arg_count; 
+                    let obj = self.stack[obj_idx].clone();
+
+                    if let Value::Module(module) = obj {
+                        if let Some(val) = module.exports.get(&method_name) {
+                            if let Value::Native(native) = val {
+                                let mut args = Vec::new();
+                                for _ in 0..arg_count {
+                                    args.push(self.pop()?);
+                                }
+                                args.reverse();
+
+                                self.pop()?; // Pop the module object off the stack
+
+                                let result = (native.function)(&args);
+                                self.push(result);
+
+                                continue;
+                            } else {
+                                return Err(self.error("R010", format!("attribute '{}' is not callable", method_name)));
+                            }
+                        } else {
+                            return Err(self.error("R011", format!("module '{}' has no attribute '{}'", module.name, method_name)));
+                        }
+                    }
+
+                    // If it's not a module, let your custom method handler take over
                     self.invoke_method(name_idx, arg_count)?;
                 }
 
@@ -589,6 +634,12 @@ impl VM {
                     if self.frames.is_empty() {
                         return Ok(());
                     }
+                }
+
+                OpCode::Import(idx) => {
+                    let name = self.read_string(idx)?;
+
+                    self.push(Value::UnloadedModule(name)       );
                 }
             }
         }

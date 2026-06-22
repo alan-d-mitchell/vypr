@@ -70,6 +70,7 @@ impl Serializer {
             DataType::Function => buf.push(0x06),
             DataType::List     => buf.push(0x07),
             DataType::Range    => buf.push(0x08),
+            DataType::Module   => buf.push(0x09),
         }
     }
 
@@ -79,32 +80,39 @@ impl Serializer {
                 self.file.write_all(&[0x01])?;
                 self.file.write_all(&i.to_be_bytes())?;
             }
+
             Value::Float(f) => {
                 self.file.write_all(&[0x02])?;
                 self.file.write_all(&f.to_be_bytes())?;
             }
+
             Value::Bool(b) => {
                 self.file.write_all(&[0x03])?;
                 self.file.write_all(&[if *b { 1 } else { 0 }])?;
             }
+
             Value::Str(s) => {
                 self.file.write_all(&[0x04])?;
                 let len = s.len() as u32;
                 self.file.write_all(&len.to_be_bytes())?;
                 self.file.write_all(s.as_bytes())?;
             }
+
             Value::None => {
                 self.file.write_all(&[0x05])?;
             }
+
             Value::Native(_) => {
                 // Cannot serialize native functions
                 self.file.write_all(&[0x05])?; // Write None placeholder
             }
+
             Value::Function(_, chunk) => {
                 self.file.write_all(&[0x06])?;
                 // Recursive serialization for function bodies
                 self.write_chunk(chunk)?;
             }
+
             Value::List(items) => {
                 self.file.write_all(&[0x07])?; // tag
                 let borrowed = items.borrow();
@@ -115,10 +123,15 @@ impl Serializer {
                     self.write_value(item)?;
                 }
             }
+
             Value::Range(start, stop) => {
                 self.file.write_all(&[0x08])?;
                 self.file.write_all(&start.to_le_bytes())?;
                 self.file.write_all(&stop.to_le_bytes())?;
+            }
+
+            Value::UnloadedModule(_) | Value::Module(_) => {
+                unreachable!("live modules are never serialized into the constant pool");
             }
         }
         Ok(())
@@ -200,6 +213,10 @@ impl Serializer {
             OpCode::FormatString(count) => {
                 buf.push(0x1F);
                 buf.extend_from_slice(&(*count as u32).to_be_bytes());
+            }
+            OpCode::Import(idx) => {
+                buf.push(0x20);
+                buf.extend_from_slice(&(*idx as u32).to_be_bytes());
             }
         }
     }

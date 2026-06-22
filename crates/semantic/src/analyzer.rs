@@ -246,6 +246,10 @@ impl Analyzer {
                     return Err(self.error("S015", "'continue' outside loop", span));
                 }
             }
+
+            StmtKind::Import { module } => {
+                self.define(module.clone(), SymbolType::Dynamic, true)
+            }
         }
 
         Ok(())
