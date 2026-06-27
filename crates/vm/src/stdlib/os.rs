@@ -1,4 +1,7 @@
+use error::error::VyprError;
+
 use crate::value::{Module, Value, NativeFunction};
+use crate::stdlib::error;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::env;
@@ -23,24 +26,33 @@ pub fn create_module() -> Value {
     }))
 }
 
-fn os_getenv(args: &[Value]) -> Value {
-    if let Some(Value::Str(key)) = args.first() {
+fn os_getenv(args: &[Value]) -> Result<Value, VyprError> {
+    if args.len() != 1 {
+        return Err(error("R014", format!("getenv() takes exactly 1 argument, got {}", args.len())));
+    }
+
+    if let Value::Str(key) = &args[0] {
         match env::var(key) {
-            Ok(val) => Value::Str(val),
-            Err(_) => Value::None,
+            Ok(val) => Ok(Value::Str(val)),
+            Err(_) => Ok(Value::None),
         }
     } else {
-        Value::None
+        Err(error("R002", format!("getenv() argument must be a string, not '{}'", args[0].get_type())))
     }
 }
 
-fn os_exit(args: &[Value]) -> Value {
-    let code = if let Some(Value::Int(i)) = args.first() {
+fn os_exit(args: &[Value]) -> Result<Value, VyprError> {
+    if args.len() > 1 {
+        return Err(error("R014", format!("exit() takes at most 1 argument, got {}", args.len())));
+    }
+
+    let code = if args.is_empty() {
+        0
+    } else if let Value::Int(i) = &args[0] {
         *i as i32
     } else {
-        0
+        return Err(error("R002", format!("exit code must be an integer, not '{}'", args[0].get_type())));
     };
     
-    // Instantly terminates the Rust host process
     process::exit(code); 
 }

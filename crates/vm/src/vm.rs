@@ -82,6 +82,14 @@ impl VM {
             lock: DataType::Function
         });
 
+        globals.insert("reversed".to_string(), GlobalVar {
+            value: Value::Native(value::NativeFunction {
+                name: "reversed".to_string(),
+                function: builtins::vypr_reversed
+            }),
+            lock: DataType::Function
+        });
+
         let main_frame = CallFrame {
             chunk,
             ip: 0,
@@ -147,7 +155,7 @@ impl VM {
 
                     if should_error {
                         return Err(self.error("R002", format!(
-                            "type error: variable '{}' is locked to {:?}, but got {:?}", 
+                            "type error: variable '{}' is locked to {}, but got {}", 
                             name, existing_lock, val.get_type()
                         )));
                     }
@@ -202,7 +210,7 @@ impl VM {
 
                             if new_type != lock {
                                 return Err(self.error("R002", format!(
-                                    "type error: variable '{}' is locked to {:?}, but got {:?}", 
+                                    "type error: variable '{}' is locked to {}, but got {}", 
                                     name, lock, new_type
                                 )));
                             }
@@ -251,7 +259,7 @@ impl VM {
 
                                 self.pop()?; // Pop the module object off the stack
 
-                                let result = (native.function)(&args);
+                                let result = (native.function)(&args)?;
                                 self.push(result);
 
                                 continue;
@@ -325,6 +333,70 @@ impl VM {
                         }
 
                         _ => return Err(self.error("R002", "object is not subscriptable"))
+                    }
+                }
+
+                OpCode::SetSubscript => {
+                    let index_val = self.pop()?; // Top of stack is Index
+                    let list_val = self.pop()?;  // Middle of stack is Base
+                    let value = self.pop()?;     // Bottom of stack is the assigned Value
+
+                    let index = match index_val {
+                        Value::Int(i) => i,
+                        _ => return Err(self.error("R002", "list index must be an integer"))
+                    };
+
+                    match list_val {
+                        Value::List(items) => {
+                            let mut borrowed = items.borrow_mut();
+                            let effective_index = if index < 0 {
+                                borrowed.len() as i64 + index
+                            } else {
+                                index
+                            };
+
+                            if effective_index < 0 || effective_index >= borrowed.len() as i64 {
+                                return Err(self.error("R003", "list assignment index out of range"));
+                            }
+
+                            borrowed[effective_index as usize] = value;
+                        }
+                        _ => return Err(self.error("R002", "object does not support item assignment"))
+                    }
+                }
+
+                OpCode::GetProperty(name_idx) => {
+                    let property_name = self.read_string(name_idx)?;
+                    let obj = self.pop()?;
+
+                    match obj {
+                        Value::Module(module) => {
+                            if let Some(val) = module.exports.get(&property_name) {
+                                self.push(val.clone());
+                            } else {
+                                return Err(self.error("R011", format!("module '{}' has no attribute '{}'", module.name, property_name)));
+                            }
+                        }
+                        _ => return Err(self.error("R012", format!("object has no attribute '{}'", property_name)))
+                    }
+                }
+
+                OpCode::SetProperty(name_idx) => {
+                    let property_name = self.read_string(name_idx)?;
+                    let _obj = self.pop()?;
+                    let _value = self.pop()?;
+                    
+                    return Err(self.error("R013", format!("cannot set property '{}' on this object", property_name)));
+                }
+
+                OpCode::ASSERT_TYPE(expected_type) => {
+                    let val = self.stack.last().ok_or_else(|| self.error("RPNC", "stack underflow on assert_type"))?;
+                    
+                    if expected_type != DataType::Any && val.get_type() != expected_type {
+                        return Err(self.error("R002", format!(
+                            "type error: expected {}, but got {}", 
+                            expected_type, val.get_type()
+                        )));
                     }
                 }
 
@@ -535,6 +607,10 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a < b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a < b)),
+                        
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) < b)),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a < (b as f64))),
+                        
                         _ => return Err(self.error("R002", "invalid operands for <")),
                     }
                 }
@@ -546,6 +622,10 @@ impl VM {
                     match (a, b) {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a > b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a > b)),
+                        
+                        (Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) > b)),
+                        (Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a > (b as f64))),
+                        
                         _ => return Err(self.error("R002", "invalid operands for >")),
                     }
                 }
@@ -599,6 +679,28 @@ impl VM {
                     }
                 }
 
+                OpCode::And => {
+                    let b = self.pop()?;
+                    let a = self.pop()?;
+                    
+                    if a.is_truthy() {
+                        self.push(b);
+                    } else {
+                        self.push(a.clone());
+                    }
+                }
+
+                OpCode::Or => {
+                    let b = self.pop()?;
+                    let a = self.pop()?;
+                    
+                    if a.is_truthy() {
+                        self.push(a.clone());
+                    } else {
+                        self.push(b);
+                    }
+                }
+
                 OpCode::FormatString(count) => {
                     let mut parts = Vec::with_capacity(count);
 
@@ -639,7 +741,7 @@ impl VM {
                 OpCode::Import(idx) => {
                     let name = self.read_string(idx)?;
 
-                    self.push(Value::UnloadedModule(name)       );
+                    self.push(Value::UnloadedModule(name));
                 }
             }
         }
@@ -675,13 +777,13 @@ impl VM {
 
                 self.pop()?;
 
-                let result = (native.function)(&args);
+                let result = (native.function)(&args)?;
                 self.push(result);
 
                 Ok(())
             }
 
-            Value::Function(arity, chunk) => {
+            Value::Function(arity, local_count, chunk) => {
                 if arg_count != arity {
                     return Err(self.error("R008", format!(
                         "function expected {} arguments but got {}", 
@@ -690,29 +792,32 @@ impl VM {
                 }
 
                 let mut args = Vec::new();
-                
                 for _ in 0..arg_count {
                     args.push(self.pop()?);
                 }
                 args.reverse();
-
-                self.pop()?;
+                self.pop()?; // pop the function itself
 
                 let new_frame_start = self.stack.len();
 
-                for arg in args {
-                    self.push(arg);
+                // Pre-allocate ALL locals (_0 through _N)
+                for _ in 0..local_count {
+                    self.push(Value::None);
                 }
 
-                let frame = CallFrame {
+                // Write args into their slots (_1 through _arity)
+                for (i, arg) in args.iter().enumerate() {
+                    self.stack[new_frame_start + 1 + i] = arg.clone();
+                }
+
+                self.frames.push(CallFrame {
                     chunk: *chunk,
                     ip: 0,
                     frame_start: new_frame_start,
-                };
-                self.frames.push(frame);
+                });
 
                 Ok(())
-            }
+            } 
 
             _ => Err(self.error("R004", "can only call functions"))
         }

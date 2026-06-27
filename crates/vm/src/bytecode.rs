@@ -25,11 +25,17 @@ pub enum OpCode {
 
     Not, Negate,
 
+    And, Or,
+
     Jump(usize),
     JumpIfFalse(usize),
     Loop(usize),
 
     GetSubscript,
+    SetSubscript,
+    GetProperty(usize),  // object.name
+    SetProperty(usize),  // object.name = value
+
     BuildList(usize),
     Length,
 
@@ -39,6 +45,8 @@ pub enum OpCode {
     Return,
 
     Import(usize),
+
+    ASSERT_TYPE(DataType),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -187,7 +195,7 @@ impl Chunk {
 
                 OpCode::DefineGlobal(idx, dtype) => {
                     let val = &self.constants[*idx];
-                    writeln!(&mut s, "{:<16} {:4} '{}' (Type: {:?})", "DEFINE_GLOBAL", idx, val, dtype).unwrap();
+                    writeln!(&mut s, "{:<16} {:4} '{}' (type: {:?})", "DEFINE_GLOBAL", idx, val, dtype).unwrap();
                 }
                 OpCode::GetGlobal(idx) => {
                     let name = &self.constants[*idx];
@@ -224,12 +232,16 @@ impl Chunk {
                     writeln!(&mut s, "{:<16} {:4}", "IMPORT", idx).unwrap();
                 }
 
+                OpCode::ASSERT_TYPE(ty) => {
+                    writeln!(&mut s, "{:<16}    {}", "ASSERT_TYPE", ty).unwrap();
+                }
+
                 _ => writeln!(&mut s, "{:?}", op).unwrap(),
             }
         }
 
         for (i, constant) in self.constants.iter().enumerate() {
-            if let Value::Function(_, chunk) = constant {
+            if let Value::Function(_, _, chunk) = constant {
                 writeln!(&mut s, "").unwrap();
                 
                 let func_name = if i + 1 < self.constants.len() {

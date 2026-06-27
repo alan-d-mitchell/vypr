@@ -53,6 +53,11 @@ impl Analyzer {
             return_type: TypeExpr::Atomic(TokenType::LIST) 
         }, true);
 
+        global_scope.define("reversed".to_string(), SymbolType::Function {
+            params: vec![TypeExpr::Any],
+            return_type: TypeExpr::Atomic(TokenType::LIST)
+        }, true);
+
         Self {
             scopes: vec![global_scope], // Start with global scope
             current_return_type: None,
@@ -538,5 +543,21 @@ impl Analyzer {
 
             _ => false,
         }
+    }
+
+    pub fn export_globals(&self) -> Vec<(String, TypeExpr)> {
+        let mut globals = Vec::new();
+
+        for (name, symbol) in &self.scopes[0].variables {
+            if let SymbolType::Function { .. } = &symbol.kind {
+                globals.push((name.clone(), TypeExpr::Any));
+            }
+        }
+
+        globals
+    }
+
+    pub fn declare_global(&mut self, name: String) {
+        self.scopes[0].define(name, SymbolType::Dynamic, true);
     }
 }

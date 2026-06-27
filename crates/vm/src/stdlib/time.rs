@@ -1,4 +1,7 @@
+use error::error::VyprError;
+
 use crate::value::{Module, Value, NativeFunction};
+use crate::stdlib::error;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
@@ -24,20 +27,28 @@ pub fn create_module() -> Value {
 }
 
 // Returns the current Unix timestamp as a float
-fn time_func(_args: &[Value]) -> Value {
+fn time_func(args: &[Value]) -> Result<Value, VyprError> {
+    if !args.is_empty() {
+        return Err(error("R014", format!("time() takes no arguments, got{}", args.len())));
+    }
+
     let start = SystemTime::now();
     let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("time went backwards");
-    Value::Float(since_the_epoch.as_secs_f64())
+
+    Ok(Value::Float(since_the_epoch.as_secs_f64()))
 }
 
 // Pauses the VM thread
-fn sleep_func(args: &[Value]) -> Value {
-    if let Some(arg) = args.first() {
-        match arg {
-            Value::Float(f) => sleep(Duration::from_secs_f64(*f)),
-            Value::Int(i) => sleep(Duration::from_secs(*i as u64)),
-            _ => {} 
-        }
+fn sleep_func(args: &[Value]) -> Result<Value, VyprError> {
+    if args.len() != 1 {
+        return Err(error("R014", format!("sleep() takes exactly 1 argument ({} given)", args.len())));
     }
-    Value::None
+
+    match &args[0] {
+        Value::Float(f) => sleep(Duration::from_secs_f64(*f)),
+        Value::Int(i) => sleep(Duration::from_secs(*i as u64)),
+        _ => return Err(error("R002", format!("sleep() argument must be a number, not '{}'", args[0].get_type()))), 
+    }
+
+    Ok(Value::None)
 }

@@ -3,6 +3,8 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 
+use error::error::VyprError;
+
 use crate::bytecode::Chunk;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,7 +21,24 @@ pub enum DataType {
     Module,
 }
 
-pub type NativeFn = fn(&[Value]) -> Value;
+impl fmt::Display for DataType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DataType::Int => write!(f, "'int'"),
+            DataType::Float => write!(f, "'float'"),
+            DataType::Str => write!(f, "'str'"),
+            DataType::Bool => write!(f, "'bool'"),
+            DataType::List => write!(f, "'list'"),
+            DataType::Range => write!(f, "'range'"),
+            DataType::None => write!(f, "'None'"),
+            DataType::Function => write!(f, "'function'"),
+            DataType::Any => write!(f, "any"),
+            DataType::Module => write!(f, "'module'"),
+        }
+    }
+}
+
+pub type NativeFn = fn(&[Value]) -> Result<Value, VyprError>;
 
 #[derive(Clone)]
 pub struct NativeFunction {
@@ -61,7 +80,7 @@ pub enum Value {
     Range(i64, i64),
     None,
     Native(NativeFunction),
-    Function(usize, Box<Chunk>),
+    Function(usize, usize, Box<Chunk>),
     UnloadedModule(String),
     Module(Rc<Module>),
 }
@@ -76,7 +95,7 @@ impl Value {
             Value::Str(_) => DataType::Str,
             Value::List(_) => DataType::List,
             Value::None => DataType::None,
-            Value::Native(_) | Value::Function(_, _) => DataType::Function,
+            Value::Native(_) | Value::Function(_, _, _) => DataType::Function,
             Value::Range(_, _) => DataType::Range,
             Value::UnloadedModule(_) | Value::Module(_) => DataType::Module,
         }
@@ -134,7 +153,7 @@ impl fmt::Display for Value {
             Value::Range(start, stop) => write!(f, "range({}, {})", start, stop),
             Value::None => write!(f, "None"),
             Value::Native(function) => write!(f, "<built-in function {}>", function.name),
-            Value::Function(_, _) => write!(f, "<fn>"),
+            Value::Function(_, _, _) => write!(f, "<fn>"),
             
             Value::Module(m) => write!(f, "<module {}>", m.name),
             Value::UnloadedModule(name) => write!(f, "<unloaded module {}>", name),

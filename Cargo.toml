@@ -3,6 +3,8 @@ members = [
     "crates/lexer",
     "crates/parser",
     "crates/semantic",
+    "crates/vir",
+    "crates/mir",
     "crates/vm",
     "crates/error",
     "cli",

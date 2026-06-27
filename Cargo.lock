@@ -98,8 +98,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "lexer",
+ "mir",
  "parser",
  "semantic",
+ "vir",
  "vm",
 ]
 
@@ -130,6 +132,16 @@ name = "lexer"
 version = "0.1.0"
 dependencies = [
  "error",
+]
+
+[[package]]
+name = "mir"
+version = "0.1.0"
+dependencies = [
+ "error",
+ "lexer",
+ "parser",
+ "vir",
 ]
 
 [[package]]
@@ -203,12 +215,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
-name = "vm"
+name = "vir"
 version = "0.1.0"
 dependencies = [
  "error",
  "lexer",
  "parser",
+]
+
+[[package]]
+name = "vm"
+version = "0.1.0"
+dependencies = [
+ "error",
+ "lexer",
+ "mir",
+ "parser",
+ "vir",
 ]
 
 [[package]]

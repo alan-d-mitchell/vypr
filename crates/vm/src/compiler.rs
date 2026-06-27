@@ -1,27 +1,18 @@
-use crate::bytecode::{self, Chunk, OpCode};
-use crate::value::{Value, DataType};
+use std::collections::HashMap;
 
-use lexer::token::TokenType;
-use parser::ast::{Expr, ExprKind, Stmt, StmtKind, TypeExpr};
+use crate::bytecode::{Chunk, OpCode};
+use crate::value::{DataType, Value};
+
 use error::error::{Span, VyprError};
-
-#[derive(Clone)]
-struct Local {
-    name: String,
-    depth: usize
-}
-
-struct LoopState {
-    continue_jumps: Vec<usize>,
-    break_jumps: Vec<usize>,
-    scope_depth: usize,
-}
+use lexer::token::TokenType;
+use parser::ast::TypeExpr;
+use mir::mir::*;
+use vir::vir::{VIRBinOp, VIRUnaryOp};
 
 pub struct Compiler {
     chunk: Chunk,
-    locals: Vec<Local>,
-    scope_depth: usize,
-    loop_stack: Vec<LoopState>
+    bb_offsets: HashMap<BasicBlockID, usize>,
+    forward_jumps: Vec<(usize, BasicBlockID)>,
 }
 
 impl Compiler {
@@ -29,9 +20,8 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             chunk: Chunk::new(),
-            locals: Vec::new(),
-            scope_depth: 0,
-            loop_stack: Vec::new()
+            bb_offsets: HashMap::new(),
+            forward_jumps: Vec::new(),
         }
     }
 
@@ -39,597 +29,312 @@ impl Compiler {
         VyprError::new(code, message, span)
     }
 
-    pub fn compile(mut self, ast: Vec<Stmt>) -> Result<Chunk, VyprError> {
-        for stmt in ast {
-            self.compile_stmt(stmt)?;
+    /// ENTRY POINT: Orchestrates compiling the entire program
+    pub fn compile_program(self, mir_program: &MIRProgram) -> Result<Chunk, VyprError> {
+        let mut script_chunk = Chunk::new();
+
+        for func in &mir_program.functions {
+            let func_compiler = Compiler::new();
+            let func_chunk = func_compiler.compile_function(func)?;
+
+            let func_val = Value::Function(func.arity, func.locals.len(), Box::new(func_chunk));
+            let func_val_idx = script_chunk.add_constant(func_val);
+            let name_idx = script_chunk.add_constant(Value::Str(func.name.clone()));
+
+            script_chunk.write(OpCode::Constant(func_val_idx), Span::default());
+            script_chunk.write(OpCode::DefineGlobal(name_idx, DataType::Function), Span::default());
         }
 
-        self.chunk.write(OpCode::Return, Span::default());
+        // Call <script> to kick off execution
+        let script_name_idx = script_chunk.add_constant(Value::Str("<script>".to_string()));
+        script_chunk.write(OpCode::GetGlobal(script_name_idx), Span::default());
+        script_chunk.write(OpCode::Call(0), Span::default());
+
+        Ok(script_chunk)
+    }
+
+    /// Compiles a single MIR function into a flat Chunk of bytecode
+    pub fn compile_function(mut self, mir_func: &MIRFunction) -> Result<Chunk, VyprError> {
+        // --- PASS 1: EMIT BYTES & RECORD OFFSETS ---
+        for (bb_idx, block) in mir_func.basic_blocks.iter().enumerate() {
+            let current_bb = BasicBlockID(bb_idx);
+            
+            self.bb_offsets.insert(current_bb, self.chunk.code.len());
+
+            // 1. Emit Statements
+            for stmt in &block.statements {
+                self.compile_statement(stmt, &mir_func.locals)?;
+            }
+
+            // 2. Emit Terminator
+            self.compile_terminator(&block.terminator, current_bb, Span::default())?;
+        }
+
+        // --- PASS 2: BACKPATCH FORWARD JUMPS ---
+        for (inst_idx, target_bb) in &self.forward_jumps {
+            let target_offset = *self.bb_offsets.get(target_bb).expect("target bb not found!");
+            let jump_length = target_offset - (*inst_idx + 1);
+
+            match self.chunk.code[*inst_idx] {
+                OpCode::Jump(_) => self.chunk.code[*inst_idx] = OpCode::Jump(jump_length),
+                OpCode::JumpIfFalse(_) => self.chunk.code[*inst_idx] = OpCode::JumpIfFalse(jump_length),
+                _ => unreachable!("attempted to backpatch a non-jump instruction"),
+            }
+        }
 
         Ok(self.chunk)
     }
 
-    fn compile_stmt(&mut self, stmt: Stmt) -> Result<(), VyprError> {
+    // --- STATEMENT COMPILATION ---
+    fn compile_statement(&mut self, stmt: &Statement, locals: &[LocalDecl]) -> Result<(), VyprError> {
         let span = stmt.span;
 
-        match stmt.kind {
-            StmtKind::ExprStmt(expr) => {
-                self.compile_expr(expr)?;
-                self.chunk.write(OpCode::Pop, span);
-            }
+        match &stmt.kind {
+            StatementKind::Assign(place, rval) => {
+                // 1. Evaluate the right-hand side (leaves value on stack)
+                self.compile_rvalue(rval, span)?;
 
-            StmtKind::VarDecl { name, value, annotation } => {
-                if let Some(expr) = value {
-                    self.compile_expr(expr)?;
-                } else {
-                    self.emit_constant(Value::None, span)
+                // 2. Type Safety Lock
+                let local_decl = &locals[place.local.0];
+                let data_type = self.type_expr_to_datatype(&local_decl.ty);
+                if data_type != DataType::Any {
+                    self.chunk.write(OpCode::ASSERT_TYPE(data_type), span);
                 }
 
-                if self.scope_depth > 0 {
-                    if let Some(idx) = self.resolve_local(&name) {
-                        self.chunk.write(OpCode::SetLocal(idx), span);
-                    } else {
-                        self.add_local(name);
-                    }
+                // 3. Store the value
+                if place.projection.is_empty() {
+                    // Standard local variable assignment
+                    self.chunk.write(OpCode::SetLocal(place.local.0), span);
                 } else {
-                    let name_idx = self.make_constant(Value::Str(name));
+                    // It's a mutation of an existing object/array (e.g., list[0] = 5)
+                    self.chunk.write(OpCode::GetLocal(place.local.0), span); // Push base object
 
-                    let type_lock = if let Some(ann) = annotation {
-                        match ann {
-                            TypeExpr::Atomic(token_type) => match token_type {
-                                TokenType::INT => DataType::Int,
-                                TokenType::FLOAT => DataType::Float,
-                                TokenType::STR => DataType::Str,
-                                TokenType::BOOL => DataType::Bool,
-                                _ => DataType::Any,
+                    for (i, proj) in place.projection.iter().enumerate() {
+                        let is_last = i == place.projection.len() - 1;
+                        
+                        match proj {
+                            ProjectionElem::Index(idx_local) => {
+                                self.chunk.write(OpCode::GetLocal(idx_local.0), span); // Push index
+                                if is_last {
+                                    // Requires OpCode::SetSubscript to be added to VM!
+                                    self.chunk.write(OpCode::SetSubscript, span); 
+                                } else {
+                                    self.chunk.write(OpCode::GetSubscript, span);
+                                }
                             }
-
-                            _ => DataType::Any
+                            ProjectionElem::Property(name) => {
+                                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                                if is_last {
+                                    // Requires OpCode::SetProperty to be added to VM!
+                                    self.chunk.write(OpCode::SetProperty(name_idx), span);
+                                } else {
+                                    // Requires OpCode::GetProperty to be added to VM!
+                                    self.chunk.write(OpCode::GetProperty(name_idx), span);
+                                }
+                            }
                         }
-                    } else {
-                        DataType::Any
-                    };
-
-                    self.chunk.write(OpCode::DefineGlobal(name_idx, type_lock), span);
-                }
-            }
-
-            StmtKind::If { condition, then, else_b } => {
-                self.compile_expr(condition)?;
-
-                let then_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                self.chunk.write(OpCode::Pop, span); 
-
-                self.enter_scope();
-                for s in then {
-                    self.compile_stmt(s)?;
-                }
-                self.exit_scope();
-
-                let else_jump = self.emit_jump(OpCode::Jump, span);
-                self.patch_jump(then_jump)?;
-
-                self.chunk.write(OpCode::Pop, span); 
-
-                if let Some(branch) = else_b {
-                    self.enter_scope();
-                    for s in branch {
-                        self.compile_stmt(s)?;
-                    }
-                    self.exit_scope();
-                }
-
-                self.patch_jump(else_jump)?;
-            }
-
-            StmtKind::For { var, iterator, body } => {
-                self.enter_scope();
-
-                self.compile_expr(iterator)?;
-                self.add_local("".to_string());
-                let list_slot = self.locals.len() - 1;
-
-                self.emit_constant(Value::Int(0), span);
-                self.add_local("".to_string());
-                let index_slot = self.locals.len() - 1;
-
-                if self.resolve_local(&var).is_none() {
-                    self.add_local(var.clone());
-                    self.emit_constant(Value::None, span);
-                }
-
-                let var_idx = self.resolve_local(&var).unwrap();
-
-                let loop_start = self.chunk.code.len();
-
-                self.loop_stack.push(LoopState {
-                    break_jumps: Vec::new(),
-                    continue_jumps: Vec::new(),
-                    scope_depth: self.scope_depth,
-                });
-
-                self.chunk.write(OpCode::GetLocal(index_slot), span); 
-                self.chunk.write(OpCode::GetLocal(list_slot), span); 
-                self.chunk.write(OpCode::Length, span);
-                self.chunk.write(OpCode::Less, span);
-
-                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                self.chunk.write(OpCode::Pop, span);
-
-                self.chunk.write(OpCode::GetLocal(list_slot), span); 
-                self.chunk.write(OpCode::GetLocal(index_slot), span); 
-                self.chunk.write(OpCode::GetSubscript, span);
-                self.chunk.write(OpCode::SetLocal(var_idx), span);
-
-                for s in body {
-                    self.compile_stmt(s)?;
-                }
-
-                let current_loop = self.loop_stack.pop().unwrap();
-
-                for continue_jump in current_loop.continue_jumps {
-                    self.patch_jump(continue_jump)?;
-                }
-
-                self.chunk.write(OpCode::GetLocal(index_slot), span);
-                self.emit_constant(Value::Int(1), span);
-                self.chunk.write(OpCode::Add, span);
-                self.chunk.write(OpCode::SetLocal(index_slot), span);
-
-                self.emit_loop(loop_start, span)?;
-
-                self.patch_jump(exit_jump)?;
-                self.chunk.write(OpCode::Pop, span);
-
-                for break_jump in current_loop.break_jumps {
-                    self.patch_jump(break_jump)?;
-                }
-
-                self.exit_scope();
-            }
-
-            StmtKind::While { condition, body } => {
-                let loop_start = self.chunk.code.len();
-
-                self.loop_stack.push(LoopState {
-                    break_jumps: Vec::new(),
-                    continue_jumps: Vec::new(),
-                    scope_depth: self.scope_depth,
-                });
-
-                self.compile_expr(condition)?;
-
-                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                self.chunk.write(OpCode::Pop, span);
-
-                self.enter_scope();
-                for s in body {
-                    self.compile_stmt(s)?;
-                }
-                self.exit_scope();
-
-                let current_loop = self.loop_stack.pop().unwrap();
-
-                for continue_jump in current_loop.continue_jumps {
-                    self.patch_jump(continue_jump)?;
-                }
-
-                self.emit_loop(loop_start, span)?;
-
-                self.patch_jump(exit_jump)?;
-
-                self.chunk.write(OpCode::Pop, span);
-
-                for break_jump in current_loop.break_jumps {
-                    self.patch_jump(break_jump)?;
-                }
-            }
-
-            StmtKind::FuncDecl { name, body, params, .. } => {
-                let mut func_compiler = Compiler::new();
-                func_compiler.scope_depth = 1;
-
-                for param in &params {
-                    func_compiler.add_local(param.name.clone());
-                }
-
-                for s in body {
-                    func_compiler.compile_stmt(s)?;
-                }
-
-                func_compiler.emit_constant(Value::None, span);
-                func_compiler.chunk.write(OpCode::Return, span);
-
-                let func_chunk = func_compiler.chunk;
-                let func_val = Value::Function(params.len(), Box::new(func_chunk));
-                self.emit_constant(func_val, span);
-
-                let name_idx = self.make_constant(Value::Str(name));
-                self.chunk.write(OpCode::DefineGlobal(name_idx, DataType::Function), span);
-            }
-
-            StmtKind::Return { value, .. } => {
-                if let Some(expr) = value {
-                    self.compile_expr(expr)?;
-                } else {
-                    self.emit_constant(Value::None, span); 
-                }
-
-                self.chunk.write(OpCode::Return, span);
-            }
-
-            StmtKind::Pass => {
-                return Ok(())
-            }
-
-            StmtKind::Break => {
-                if self.loop_stack.is_empty() {
-                    return Err(self.error("C004", "'break' outside loop", span));
-                }
-
-                let loop_depth = self.loop_stack.last().unwrap().scope_depth;
-                for local in self.locals.iter().rev() {
-                    if local.depth > loop_depth {
-                        self.chunk.write(OpCode::Pop, span);
-                    } else {
-                        break;
                     }
                 }
-
-                let jump = self.emit_jump(OpCode::Jump, span);
-
-                self.loop_stack.last_mut().unwrap().break_jumps.push(jump);
             }
 
-            StmtKind::Continue => {
-                if self.loop_stack.is_empty() {
-                    return Err(self.error("C005", "'continue' outside loop", span));
-                }
-
-                let loop_depth = self.loop_stack.last().unwrap().scope_depth;
-                for local in self.locals.iter().rev() {
-                    if local.depth > loop_depth {
-                        self.chunk.write(OpCode::Pop, span);
-                    } else {
-                        break;
-                    }
-                }
-
-                let jump = self.emit_jump(OpCode::Jump, span);
-                self.loop_stack.last_mut().unwrap().continue_jumps.push(jump); 
+            StatementKind::DefineGlobal(name, ty, rval) => {
+                self.compile_rvalue(rval, span)?;
+                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                let dtype = self.type_expr_to_datatype(ty);
+                self.chunk.write(OpCode::DefineGlobal(name_idx, dtype), span);
             }
 
-            StmtKind::Import { module } => {
-                let name_idx = self.chunk.add_constant(Value::Str(module.clone()));
-                
-                // 1. VM searches the standard library and pushes the Module object to the stack
-                self.chunk.write(OpCode::Import(name_idx), span);
-                
-                // 2. VM pops the stack and saves it as a variable named "time"
-                self.chunk.write(OpCode::DefineGlobal(name_idx, DataType::Any), span);
+            StatementKind::AssignGlobal(name, rval) => {
+                self.compile_rvalue(rval, span)?;
+                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                self.chunk.write(OpCode::SetGlobal(name_idx), span);
             }
         }
 
         Ok(())
     }
 
-    fn compile_expr(&mut self, expr: Expr) -> Result<(), VyprError> {
-        let span = expr.span;
-
-        match expr.kind {
-            ExprKind::Binary { left, operator, right } => {
-                match operator {
-                    TokenType::AND => {
-                        self.compile_expr(*left)?;
-
-                        let end_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                        self.chunk.write(OpCode::Pop, span); // Discard left if true
-                        
-                        self.compile_expr(*right)?;
-                        self.patch_jump(end_jump)?;
-
-                        return Ok(());
-                    }
-
-                    TokenType::OR => {
-                        self.compile_expr(*left)?;
-
-                        let else_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                        let end_jump = self.emit_jump(OpCode::Jump, span); // Jump over right
-                        
-                        self.patch_jump(else_jump)?;
-                        self.chunk.write(OpCode::Pop, span); // Discard left if false
-                        self.compile_expr(*right)?;
-                        self.patch_jump(end_jump)?;
-
-                        return Ok(());
-                    }
-
-                    _ => {
-                        self.compile_expr(*left)?;
-                        self.compile_expr(*right)?;
-                        
-                        match operator {
-                            TokenType::PLUS => self.chunk.write(OpCode::Add, span),
-                            TokenType::MINUS => self.chunk.write(OpCode::Sub, span),
-                            TokenType::STAR => self.chunk.write(OpCode::Mul, span),
-                            TokenType::FSLASH => self.chunk.write(OpCode::Div, span),
-                            TokenType::MODULO => self.chunk.write(OpCode::Modulo, span),
-                            TokenType::DOUBLE_FSLASH => self.chunk.write(OpCode::FloorDiv, span),
-                            TokenType::DOUBLE_STAR => self.chunk.write(OpCode::Power, span),
-                            TokenType::DOUBLE_EQUAL => self.chunk.write(OpCode::Equal, span),
-                            TokenType::LESS_THAN => self.chunk.write(OpCode::Less, span),
-                            TokenType::GREATER_THAN => self.chunk.write(OpCode::Greater, span),
-                            TokenType::LESS_THAN_EQUAL => self.chunk.write(OpCode::LessEqual, span),
-                            TokenType::GREATER_THAN_EQUAL => self.chunk.write(OpCode::GreaterEqual, span),
-                            _ => return Err(self.error("C001", "unknown binary operator", span))
-                        }
-                    }
-                }
-            }
-
-            ExprKind::Unary { operator, right } => {
-                self.compile_expr(*right)?;
-
-                match operator {
-                    TokenType::MINUS => self.chunk.write(OpCode::Negate, span),
-                    TokenType::NOT => self.chunk.write(OpCode::Not, span),
-
-                    _ => return Err(self.error("C002", "unknown unary operator", span))
-                }
-            }
-
-            ExprKind::Grouping(inner) => self.compile_expr(*inner)?,
-
-            ExprKind::Literal(token_type) => {
-                match token_type {
-                    TokenType::INT_LITERAL(i) => self.emit_constant(Value::Int(i), span),
-                    TokenType::FLOAT_LITERAL(f) => self.emit_constant(Value::Float(f), span),
-                    TokenType::STR_LITERAL(s) => self.emit_constant(Value::Str(s), span),
-                    TokenType::TRUE => self.emit_constant(Value::Bool(true), span),
-                    TokenType::FALSE => self.emit_constant(Value::Bool(false), span),
-                    TokenType::NONE => self.emit_constant(Value::None, span),
-                    _ => {}
-                }
-            }
-
-            ExprKind::Variable(name) => {
-                // CHECK LOCAL FIRST
-                if let Some(idx) = self.resolve_local(&name) {
-                    self.chunk.write(OpCode::GetLocal(idx), span);
-                } else {
-                    // Fallback to Global
-                    let name_idx = self.make_constant(Value::Str(name));
-                    self.chunk.write(OpCode::GetGlobal(name_idx), span);
-                }
-            }
-
-            ExprKind::Call { callee, args } => {
-                self.compile_expr(*callee)?;
-
-                for arg in args.clone() {
-                    self.compile_expr(arg)?;
-                }
-
-                self.chunk.write(OpCode::Call(args.len()), span);
-            }
-
-            ExprKind::MethodCall { callee, args, method } => {
-                self.compile_expr(*callee)?;
+    // --- RVALUE & OPERAND COMPILATION ---
+    fn compile_rvalue(&mut self, rval: &Rvalue, span: Span) -> Result<(), VyprError> {
+        match rval {
+            Rvalue::Use(operand) => self.compile_operand(operand, span)?,
+            
+            Rvalue::BinaryOp(op, lhs, rhs) => {
+                self.compile_operand(lhs, span)?;
+                self.compile_operand(rhs, span)?;
                 
-                // 2. Push the arguments
-                for arg in &args {
-                    self.compile_expr(arg.clone())?;
+                // Map ALL VIR operators to OpCodes
+                match op {
+                    VIRBinOp::Add => self.chunk.write(OpCode::Add, span),
+                    VIRBinOp::Sub => self.chunk.write(OpCode::Sub, span),
+                    VIRBinOp::Mul => self.chunk.write(OpCode::Mul, span),
+                    VIRBinOp::Div => self.chunk.write(OpCode::Div, span),
+                    VIRBinOp::Mod => self.chunk.write(OpCode::Modulo, span),
+                    VIRBinOp::FloorDiv => self.chunk.write(OpCode::FloorDiv, span),
+                    VIRBinOp::Power => self.chunk.write(OpCode::Power, span),
+                    VIRBinOp::Eq => self.chunk.write(OpCode::Equal, span),
+                    VIRBinOp::Ne => {
+                        self.chunk.write(OpCode::Equal, span);
+                        self.chunk.write(OpCode::Not, span); // Neq is just (Eq -> Not)
+                    }
+                    VIRBinOp::And => self.chunk.write(OpCode::And, span),
+                    VIRBinOp::Or => self.chunk.write(OpCode::Or, span),
+                    VIRBinOp::Lt => self.chunk.write(OpCode::Less, span),
+                    VIRBinOp::Le => self.chunk.write(OpCode::LessEqual, span),
+                    VIRBinOp::Gt => self.chunk.write(OpCode::Greater, span),
+                    VIRBinOp::Ge => self.chunk.write(OpCode::GreaterEqual, span),
                 }
-
-                // 3. Emit the Invoke instruction
-                let name_idx = self.make_constant(Value::Str(method.clone()));
-                self.chunk.write(OpCode::Invoke(name_idx, args.len()), span);
             }
 
-            ExprKind::Subscript { callee, index } => {
-                self.compile_expr(*callee)?;
-                self.compile_expr(*index)?;
-                self.chunk.write(OpCode::GetSubscript, span);
+            Rvalue::UnaryOp(op, operand) => {
+                self.compile_operand(operand, span)?;
+                match op {
+                    VIRUnaryOp::Neg => self.chunk.write(OpCode::Negate, span),
+                    VIRUnaryOp::Not => self.chunk.write(OpCode::Not, span),
+                }
             }
 
-            ExprKind::List(elements) => {
-                for element in elements.clone() {
-                    self.compile_expr(element)?;
+            Rvalue::ListInit(elements) => {
+                for element in elements {
+                    self.compile_operand(element, span)?;
                 }
-                // Emit instruction to build list from the top N items on stack
                 self.chunk.write(OpCode::BuildList(elements.len()), span);
             }
 
-            ExprKind::ListComp { expr, var, iterator, condition } => {
-                let base_depth = self.current_stack_depth();
-                let padding_needed = base_depth.saturating_sub(self.locals.len());
+            Rvalue::Import(module) => {
+                let name_idx = self.chunk.add_constant(Value::Str(module.clone()));
+                self.chunk.write(OpCode::Import(name_idx), span);
+            }
 
-                for _ in 0..padding_needed {
-                    self.locals.push(Local { name: "<dummy>".to_string(), depth: self.scope_depth });
+            Rvalue::FunctionDef(function) => {
+                let compiler = Compiler::new();
+                let chunk = compiler.compile_function(function)?;
+
+                let val = Value::Function(function.arity, function.locals.len(), Box::new(chunk));
+                let idx = self.chunk.add_constant(val);
+
+                self.chunk.write(OpCode::Constant(idx), span)
+            }
+
+            Rvalue::FormatString(ops) => {
+                for op in ops {
+                    self.compile_operand(op, span)?;
                 }
+                self.chunk.write(OpCode::FormatString(ops.len()), span);
+            }
+        }
 
-                self.chunk.write(OpCode::BuildList(0), span);
-                self.add_local("<listcomp>".to_string());
-                let list_slot = self.locals.len() - 1;
+        Ok(())
+    }
 
-                self.compile_expr(*iterator)?;
-                self.add_local("<iter>".to_string());
-                let iter_slot = self.locals.len() - 1;
+    fn compile_operand(&mut self, operand: &Operand, span: Span) -> Result<(), VyprError> {
+        match operand {
+            Operand::Copy(place) => {
+                self.chunk.write(OpCode::GetLocal(place.local.0), span);
 
-                self.emit_constant(Value::Int(0), span);
-                self.add_local("<idx>".to_string());
-                let index_slot = self.locals.len() - 1;
-
-                self.emit_constant(Value::None, span);
-                self.add_local(var);
-                let var_slot = self.locals.len() - 1;
-
-                let loop_start = self.chunk.code.len();
-
-                self.chunk.write(OpCode::GetLocal(index_slot), span);
-                self.chunk.write(OpCode::GetLocal(iter_slot), span);
-                self.chunk.write(OpCode::Length, span);
-                self.chunk.write(OpCode::Less, span);
-
-                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-                self.chunk.write(OpCode::Pop, span);
-
-                self.chunk.write(OpCode::GetLocal(iter_slot), span);
-                self.chunk.write(OpCode::GetLocal(index_slot), span);
-                self.chunk.write(OpCode::GetSubscript, span);
-                self.chunk.write(OpCode::SetLocal(var_slot), span);
-
-                let mut skip_jump = None;
-                if let Some(cond) = condition {
-                    self.compile_expr(*cond)?;
-                    skip_jump = Some(self.emit_jump(OpCode::JumpIfFalse, span));
-                    self.chunk.write(OpCode::Pop, span);
+                for proj in &place.projection {
+                    match proj {
+                        ProjectionElem::Index(idx_local) => {
+                            self.chunk.write(OpCode::GetLocal(idx_local.0), span);
+                            self.chunk.write(OpCode::GetSubscript, span);
+                        }
+                        ProjectionElem::Property(name) => {
+                            let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                            self.chunk.write(OpCode::GetProperty(name_idx), span);
+                        }
+                    }
                 }
+            }
+            Operand::Const(c) => {
+                let val = match c {
+                    vir::context::Constant::Int(i) => Value::Int(*i),
+                    vir::context::Constant::Float(f) => Value::Float(*f),
+                    vir::context::Constant::String(s) => Value::Str(s.clone()),
+                    vir::context::Constant::Bool(b) => Value::Bool(*b),
+                    vir::context::Constant::None => Value::None,
+                };
+                let idx = self.chunk.add_constant(val);
+                self.chunk.write(OpCode::Constant(idx), span);
+            }
+            Operand::Static(name) => {
+                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                self.chunk.write(OpCode::GetGlobal(name_idx), span);
+            }
+        }
+        Ok(())
+    }
 
-                self.chunk.write(OpCode::GetLocal(list_slot), span);
-                self.compile_expr(*expr)?;
-
-                let append_idx = self.make_constant(Value::Str("append".to_string()));
-                self.chunk.write(OpCode::Invoke(append_idx, 1), span);
-                self.chunk.write(OpCode::Pop, span);
-
-                if let Some(jump) = skip_jump {
-                    let bypass_false_pop = self.emit_jump(OpCode::Jump, span);
-
-                    self.patch_jump(jump)?;
-                    self.chunk.write(OpCode::Pop, span);
-
-                    self.patch_jump(bypass_false_pop)?;
-                }
-
-                self.chunk.write(OpCode::GetLocal(index_slot), span);
-                self.emit_constant(Value::Int(1), span);
-                self.chunk.write(OpCode::Add, span);
-                self.chunk.write(OpCode::SetLocal(index_slot), span);
-
-                self.emit_loop(loop_start, span)?;
-
-                self.patch_jump(exit_jump)?;
-                self.chunk.write(OpCode::Pop, span); // pop loop condition result
-
-                self.chunk.write(OpCode::Pop, span); // pop var
-                self.chunk.write(OpCode::Pop, span); // pop idx
-                self.chunk.write(OpCode::Pop, span); // pop iter
+    // --- TERMINATOR COMPILATION ---
+    fn compile_terminator(&mut self, terminator: &Terminator, current_bb: BasicBlockID, span: Span) -> Result<(), VyprError> {
+        match terminator {
+            Terminator::Goto { target } => {
+                self.emit_jump_or_loop(*target, current_bb, OpCode::Jump, span);
+            }
+            Terminator::SwitchInt { discriminant, true_target, false_target } => {
+                self.compile_operand(discriminant, span)?;
                 
-                self.locals.pop(); // var
-                self.locals.pop(); // idx
-                self.locals.pop(); // iter
-                self.locals.pop(); // listcomp
-                
-                for _ in 0..padding_needed {
-                    self.locals.pop();
-                }            
+                let jmp_false_idx = self.chunk.code.len();
+                self.chunk.write(OpCode::JumpIfFalse(0xFFFF), span); 
+                self.forward_jumps.push((jmp_false_idx, *false_target));
+                self.chunk.write(OpCode::Pop, span); 
+
+                self.emit_jump_or_loop(*true_target, current_bb, OpCode::Jump, span);
             }
-
-            ExprKind::FString(parts) => {
-                let part_count = parts.len();
-
-                for part in parts {
-                    self.compile_expr(part)?;
+            Terminator::Call { callee, args, destination, target } => {
+                self.compile_operand(callee, span)?;
+                for arg in args {
+                    self.compile_operand(arg, span)?;
                 }
+                
+                self.chunk.write(OpCode::Call(args.len()), span);
+                self.chunk.write(OpCode::SetLocal(destination.local.0), span);
 
-                self.chunk.write(OpCode::FormatString(part_count), span);
+                self.emit_jump_or_loop(*target, current_bb, OpCode::Jump, span);
             }
-        }
+            Terminator::MethodCall { object, method_name, args, destination, target } => {
+                self.compile_operand(object, span)?;
+                for arg in args {
+                    self.compile_operand(arg, span)?;
+                }
+                
+                let name_idx = self.chunk.add_constant(Value::Str(method_name.clone()));
+                self.chunk.write(OpCode::Invoke(name_idx, args.len()), span);
+                self.chunk.write(OpCode::SetLocal(destination.local.0), span);
 
+                self.emit_jump_or_loop(*target, current_bb, OpCode::Jump, span);
+            }
+            Terminator::Return => {
+                self.chunk.write(OpCode::GetLocal(0), span);
+                self.chunk.write(OpCode::Return, span);
+            }
+            Terminator::Unreachable => {}
+        }
         Ok(())
     }
 
-    fn emit_constant(&mut self, value: Value, span: Span) {
-        let idx = self.make_constant(value);
-        self.chunk.write(OpCode::Constant(idx), span);
+    // --- HELPERS ---
+    fn emit_jump_or_loop(&mut self, target: BasicBlockID, _current_bb: BasicBlockID, jump_op: fn(usize) -> OpCode, span: Span) {
+        if let Some(&target_offset) = self.bb_offsets.get(&target) {
+            let current_offset = self.chunk.code.len() + 1; 
+            let loop_length = current_offset - target_offset;
+            self.chunk.write(OpCode::Loop(loop_length), span);
+        } else {
+            let idx = self.chunk.code.len();
+            self.chunk.write(jump_op(0xFFFF), span);
+            self.forward_jumps.push((idx, target));
+        }
     }
 
-    fn make_constant(&mut self, value: Value) -> usize {
-        self.chunk.add_constant(value)
-    }
-
-    fn resolve_local(&self, name: &str) -> Option<usize> {
-        for (i, local) in self.locals.iter().enumerate().rev() {
-            if local.name == name {
-                return Some(i);
+    fn type_expr_to_datatype(&self, ty: &TypeExpr) -> DataType {
+        match ty {
+            TypeExpr::Atomic(token_type) => match token_type {
+                TokenType::INT => DataType::Int,
+                TokenType::FLOAT => DataType::Float,
+                TokenType::STR => DataType::Str,
+                TokenType::BOOL => DataType::Bool,
+                _ => DataType::Any,
             }
-        }
-
-        None
-    }
-
-    fn current_stack_depth(&self) -> usize {
-        let mut depth: isize = 0;
-
-        for op in &self.chunk.code {
-            let effect = match op {
-                OpCode::Constant(_) | OpCode::GetGlobal(_) | OpCode::GetLocal(_) => 1,
-                OpCode::DefineGlobal(_, _) | OpCode::SetGlobal(_) | OpCode::SetLocal(_) | OpCode::Pop |
-                OpCode::Add | OpCode::Sub | OpCode::Mul | OpCode::Div | OpCode::Modulo | 
-                OpCode::FloorDiv | OpCode::Power | OpCode::Equal | OpCode::Less | OpCode::Greater | 
-                OpCode::LessEqual | OpCode::GreaterEqual | OpCode::GetSubscript => -1,
-                OpCode::Not | OpCode::Negate | OpCode::Jump(_) | OpCode::JumpIfFalse(_) | 
-                OpCode::Loop(_) | OpCode::Length => 0,
-                OpCode::BuildList(count) => -(*count as isize) + 1,
-                OpCode::Call(arg_count) | OpCode::Invoke(_, arg_count) => -(*arg_count as isize),
-                OpCode::FormatString(count) => -(*count as isize) + 1,
-                OpCode::Return => 0,
-                OpCode::Import(_) => 1,
-            };
-            depth += effect;
-        }
-        
-        depth.max(0) as usize
-    }
-
-    // Helper to declare a local (for parameters)
-    fn add_local(&mut self, name: String) {
-        self.locals.push(Local { 
-            name, 
-            depth: self.scope_depth
-        });
-    }
-
-    fn emit_jump(&mut self, instruction: fn(usize) -> OpCode, span: Span) -> usize {
-        self.chunk.write(instruction(0xFFFF), span); 
-        self.chunk.code.len() - 1
-    }
-
-    fn patch_jump(&mut self, offset_idx: usize) -> Result<(), VyprError> {
-        let jump = self.chunk.code.len() - offset_idx - 1;
-        
-        match self.chunk.code[offset_idx] {
-            OpCode::JumpIfFalse(_) => self.chunk.code[offset_idx] = OpCode::JumpIfFalse(jump),
-            OpCode::Jump(_) => self.chunk.code[offset_idx] = OpCode::Jump(jump),
-
-            _ => return Err(self.error("C003", "attempted to patch non-jump", Span::default())),
-        }
-
-        Ok(())
-    }
-
-    fn emit_loop(&mut self, loop_start: usize, span: Span) -> Result<(), VyprError> {
-        let offset = self.chunk.code.len() - loop_start + 1; // +1 for the Loop instruction itself
-        self.chunk.write(OpCode::Loop(offset), span);
-        Ok(())
-    }
-
-    fn enter_scope(&mut self) {
-        self.scope_depth += 1;
-    }
-
-    fn exit_scope(&mut self) {
-        self.scope_depth -= 1;
-        // Pop locals defined in this scope
-        while let Some(local) = self.locals.last() {
-            if local.depth > self.scope_depth {
-                self.chunk.write(OpCode::Pop, Span::default());
-                self.locals.pop();
-            } else {
-                break;
-            }
+            _ => DataType::Any
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 use parser::ast::TypeExpr;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +20,7 @@ pub struct Symbol {
 }
 
 pub struct Scope {
-    variables: HashMap<String, Symbol>,
+    pub variables: HashMap<String, Symbol>,
 }
 
 impl Scope {

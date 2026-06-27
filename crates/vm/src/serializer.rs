@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, Write};
-use std::time::{SystemTime, UNIX_EPOCH}; // NEW: For timestamp
+use std::time::{SystemTime, UNIX_EPOCH};
 use crate::bytecode::{Chunk, OpCode};
 use crate::value::{Value, DataType};
 
@@ -107,7 +107,7 @@ impl Serializer {
                 self.file.write_all(&[0x05])?; // Write None placeholder
             }
 
-            Value::Function(_, chunk) => {
+            Value::Function(_, _, chunk) => {
                 self.file.write_all(&[0x06])?;
                 // Recursive serialization for function bodies
                 self.write_chunk(chunk)?;
@@ -218,6 +218,21 @@ impl Serializer {
                 buf.push(0x20);
                 buf.extend_from_slice(&(*idx as u32).to_be_bytes());
             }
+            OpCode::ASSERT_TYPE(ty) => {
+                buf.push(0x21);
+                self.write_datatype(buf, ty);
+            }
+            OpCode::SetSubscript => buf.push(0x22),
+            OpCode::GetProperty(name_idx) => {
+                buf.push(0x23);
+                buf.extend_from_slice(&(*name_idx as u32).to_be_bytes());
+            }
+            OpCode::SetProperty(name_idx) => {
+                buf.push(0x24);
+                buf.extend_from_slice(&(*name_idx as u32).to_be_bytes());
+            }
+            OpCode::And => buf.push(0x25),
+            OpCode::Or => buf.push(0x26),
         }
     }
 }
