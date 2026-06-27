@@ -1,0 +1,17 @@
+def outer():
+    text: str = "hello"; # 'text' lives in outer's local stack frame
+
+    # since vypr doesnt not currently support UpValues
+    # 'inner()' will assume 'text' is global and fail to find it
+    # 
+    # error[R001]
+    # undefined variable 'text'
+    def inner():
+        print(text); 
+        
+    inner();
+
+def main() -> None:
+    outer();
+
+main();

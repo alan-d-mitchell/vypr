@@ -1,0 +1,11 @@
+# true division (/) always promotes to a float
+precise: float = 5.0 / 2.0;  
+print(precise); # 2.5
+
+# floor division (//) truncates to an int
+chunky: int = 5 // 2;    
+print(chunky);  # 2
+
+# the VM handles mixed-type comparisons automatically!
+if chunky < precise:
+    print("the VM successfully compared an int and a float");

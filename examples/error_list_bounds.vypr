@@ -1,0 +1,17 @@
+# the analyzer allows this because 'index' is a valid integer
+#
+# you might be asking: 
+# "WHY DOESNT THE ANALYZER CATCH THIS?"
+# because list sizes and variable values are dynamic.
+# at compile time, the semantic analyzer only tracks TYPES.
+# it does NOT track the actual memory values of lengths of lists
+# because those could change based on user input or loops
+#
+# the job of the analyzer is to verify the operation is valid
+# the job of the VM is to verify the operation is safe at runtime
+arr: list = [1, 2, 3];
+index: int = 5;
+
+# error[R003]
+# list index out of range
+print(arr[index]);

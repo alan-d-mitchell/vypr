@@ -1,0 +1,10 @@
+# locked variable (static typing)
+counter: int = 0;
+counter = counter + 1;
+
+# dynamic variable (dynamic typing)
+buffer = 100;
+print(f"Buffer is initially a number: {buffer}");
+
+buffer = "Now I am a string!";
+print(buffer);

@@ -1,0 +1,33 @@
+# the analyzer locks 'var' to type 'int'
+var: int = 10; 
+
+# the analyzer sees there is no annotation
+# and assigns 'val' to type 'Any'
+#
+# NOTE: Any is not a valid type annotation
+# it is simply an internal representation of
+# a variable WITHOUT an annotation
+val = "Hello Vypr!"; 
+
+# because 'val' is of type 'Any', this assignment
+# is legal to the analyzer because the analyzer
+# does not know what val is at this time and
+# variables that are of 'Any' type can be reassigned
+# to a value of any type, hence the name 'Any'
+#
+# HOWEVER, once the VM sees this it throws an error:
+# error[R002]
+# type error: variable 'var' is locked to type 'int', but got 'str'
+#
+# the VM knows to throw this error because the compiler 
+# emits a bytecode instruction ASSERT_TYPE that compares
+# the type of the value on top of the stack with the expected
+# and if they do NOT match, error[R002] is thrown
+#
+# NOTE: the error code is ALWAYS prefixed with where the error
+# originates from
+#
+# L = Lexer, P = Parser, S = Semantic Analyzer, R = Runtime (VM)
+var = val;
+
+print(var);

@@ -1,0 +1,7 @@
+# the semantic analyzer catches this error immediately at compile time
+# because 'twenty' is a string literal, the analyzer knows its type
+# is 'str' and rejects assigning a 'str' to a variable locked to 'int'
+#
+# error[S001]
+# type error: variable 'age' declared as 'int' but assigned value of type 'str'
+age: int = "twenty";

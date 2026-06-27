@@ -1,0 +1,46 @@
+import canvas;
+import time;
+
+def main() -> None:
+    width: int = 800;
+    height: int = 800;
+    max_iter: int = 50;
+
+    print("initializing canvas");
+    canvas.init(width, height);
+
+    print("generating mandelbrot");
+    start: float = time.time();
+
+    for py in range(0, height):
+        y0: float = (py / height) * 4.0 - 2.0;
+
+        for px in range(0, width):
+            x0: float = (px / width) * 4.0 - 2.5;
+
+            x: float = 0.0;
+            y: float = 0.0;
+            iteration: int = 0;
+
+            while (x*x + y*y <= 4.0) and (iteration < max_iter):
+                xtemp: float = x*x - y*y + x0;
+                y = 2.0 * x * y + y0;
+                x = xtemp;
+                iteration = iteration + 1;
+
+            if iteration == max_iter:
+                canvas.set_pixel(px, py, 0, 0, 0);
+            else:
+                r: int = (iteration * 15) % 256;
+                g: int = (iteration * 5) % 256;
+                b: int = (iteration * 20) % 256;
+                canvas.set_pixel(px, py, r, g, b);
+
+    end: float = time.time();
+    print(f"render time: {end - start} seconds");
+
+    print("saving fractal")
+    canvas.save("fractal.ppm");
+
+main();
+

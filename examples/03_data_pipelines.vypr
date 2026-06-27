@@ -1,0 +1,5 @@
+# generate a range, reverse it, and evaluate its length natively
+countdown = reversed(range(0, 10));
+
+print(f"Initiating sequence of {len(countdown)} steps:");
+print(countdown);
