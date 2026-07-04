@@ -142,36 +142,81 @@ impl MIRBuilder {
             VIRExprKind::Assign { target, value } => {
                 let rval = self.lower_expr(value);
 
-                if let VIRExprKind::VarRef(var_id) = &target.kind {
-                    if let Some(local_id) = self.var_map.get(&var_id.0) {
-                        let place = Place { local: *local_id, projection: vec![] };
+                match &target.kind {
+                    VIRExprKind::VarRef(var_id) => {
+                        if let Some(local_id) = self.var_map.get(&var_id.0) {
+                            let place = Place { local: *local_id, projection: vec![] };
 
-                        self.push_statement(Statement {
-                            kind: StatementKind::Assign(place.clone(), Rvalue::Use(rval)),
-                            span: expr.span,
-                        });
+                            self.push_statement(Statement {
+                                kind: StatementKind::Assign(place.clone(), Rvalue::Use(rval)),
+                                span: expr.span,
+                            });
 
-                        return Operand::Copy(place);
-                    } else {
-                        let temp = self.new_local(parser::ast::TypeExpr::Any, None);
-                        let temp_place = Place { local: temp, projection: vec![] };
+                            return Operand::Copy(place);
+                        } else {
+                            let temp = self.new_local(TypeExpr::Any, None);
+                            let temp_place = Place { local: temp, projection: vec![] };
 
-                        self.push_statement(Statement {
-                            kind: StatementKind::Assign(temp_place.clone(), Rvalue::Use(rval)),
-                            span: expr.span,
-                        });
+                            self.push_statement(Statement {
+                                kind: StatementKind::Assign(temp_place.clone(), Rvalue::Use(rval)),
+                                span: expr.span,
+                            });
 
-                        self.push_statement(Statement {
-                            kind: StatementKind::AssignGlobal(var_id.1.clone(), Rvalue::Use(Operand::Copy(temp_place.clone()))),
-                            span: expr.span,
-                        });
+                            self.push_statement(Statement {
+                                kind: StatementKind::AssignGlobal(var_id.1.clone(), Rvalue::Use(Operand::Copy(temp_place.clone()))),
+                                span: expr.span,
+                            });
 
-                        return Operand::Copy(temp_place);
+                            Operand::Copy(temp_place)
+                        }
                     }
-                }
 
-                unimplemented!("[ICE] assignment to non-variables");
+                    VIRExprKind::SubscriptAccess { base, index } => {
+                        let base_op = self.lower_expr(base);
+                        let index_op = self.lower_expr(index);
+
+                        let base_local = match base_op.clone() {
+                            Operand::Copy(p) => p.local,
+                            Operand::Static(_) => {
+                                let temp = self.new_local(TypeExpr::Any, None);
+                                self.push_statement(Statement {
+                                    kind: StatementKind::Assign(Place { local: temp, projection: vec![] }, Rvalue::Use(base_op)),
+                                    span: expr.span,
+                                });
+                                temp
+                            }
+                            Operand::Const(_) => panic!("cannot assign to a constant subscript!"),
+                        };
+
+                        let index_local = match index_op.clone() {
+                            Operand::Copy(p) => p.local,
+                            Operand::Const(_) | Operand::Static(_) => {
+                                let temp = self.new_local(TypeExpr::Any, None);
+                                self.push_statement(Statement {
+                                    kind: StatementKind::Assign(Place { local: temp, projection: vec![] }, Rvalue::Use(index_op)),
+                                    span: expr.span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let target_place = Place {
+                            local: base_local,
+                            projection: vec![ProjectionElem::Index(index_local)],
+                        };
+                        
+                        self.push_statement(Statement {
+                            kind: StatementKind::Assign(target_place.clone(), Rvalue::Use(rval)),
+                            span: expr.span,
+                        });
+
+                        Operand::Copy(target_place)
+                    }
+
+                    _ => unimplemented!("[ICE] assignment to non-variable/non-subscript targets"),
+                }
             }
+
             // --- 3. Math & Logic ---
             VIRExprKind::Binary { op, lhs, rhs } => {
                 let left_op = self.lower_expr(lhs);

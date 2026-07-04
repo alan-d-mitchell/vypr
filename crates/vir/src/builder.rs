@@ -412,7 +412,14 @@ impl VIRBuilder {
                 } else {
                     panic!("[ICE] complex dynamic dispatch calls not yet supported in VIR")
                 }
-            } 
+            }
+
+            ExprKind::Assign { target, value } => {
+                VIRExprKind::Assign {
+                    target: Box::new(self.lower_expr(target)),
+                    value: Box::new(self.lower_expr(value)),
+                }
+            }
 
             ExprKind::MethodCall { callee, method, args } => {
                 let lowered_args = args.iter().map(|a| self.lower_expr(a)).collect();

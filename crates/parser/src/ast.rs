@@ -127,6 +127,11 @@ pub enum ExprKind {
         right: Box<Expr>
     },
 
+    Assign {
+        target: Box<Expr>,
+        value: Box<Expr>,
+    },
+
     MethodCall {
         callee: Box<Expr>,
         args: Vec<Expr>,
