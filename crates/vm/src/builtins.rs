@@ -184,3 +184,25 @@ pub fn vypr_reversed(args: &[Value]) -> Result<Value, VyprError> {
         _ => Err(error("R002", format!("'{}' object is not reversible", args[0].get_type())))
     }
 }
+
+pub fn vypr_input(args: &[Value]) -> Result<Value, VyprError> {
+    if args.len() > 1 {
+        return Err(error("R014", format!("input() takes at most 1 argument, got {}", args.len())));
+    }
+
+    if args.len() == 1 {
+        let mut stdout = io::stdout().lock();
+        let s = args[0].to_string();
+        let _ = stdout.write_all(s.as_bytes());
+        let _ = stdout.flush();
+    }
+
+    let mut buffer = String::new();
+    match io::stdin().read_line(&mut buffer) {
+        Ok(_) => {
+            let sanitized = buffer.trim_end().to_string();
+            Ok(Value::Str(sanitized))
+        }
+        Err(e) => Err(error("R015", format!("failed to read input: {}", e)))
+    }
+}
