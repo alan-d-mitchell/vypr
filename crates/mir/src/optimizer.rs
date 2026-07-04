@@ -190,10 +190,17 @@ impl Optimizer {
             // 1. Tally up every time a variable is read
             for block in &func.basic_blocks {
                 for stmt in &block.statements {
-                    if let StatementKind::Assign(_, rval) = &stmt.kind {
+                    if let StatementKind::Assign(place, rval) = &stmt.kind {
                         Self::count_reads_in_rvalue(rval, &mut read_counts);
+
+                        for proj in &place.projection {
+                            if let ProjectionElem::Index(idx_local) = proj {
+                                *read_counts.entry(*idx_local).or_insert(0) += 1;
+                            }
+                        }
                     }
                 }
+
                 match &block.terminator {
                     Terminator::SwitchInt { discriminant, .. } => Self::count_reads(discriminant, &mut read_counts),
                     Terminator::Call { args, .. } | Terminator::MethodCall { args, .. } => {
@@ -208,19 +215,21 @@ impl Optimizer {
                 let original_len = block.statements.len();
                 
                 block.statements.retain(|stmt| {
-                    if let StatementKind::Assign(place, _) = &stmt.kind {
-                        // ALWAYS keep the return variable (_0) and array mutations (arr[0] = x)
-                        if place.local.0 == 0 || !place.projection.is_empty() {
+                    if let StatementKind::Assign(place, rval) = &stmt.kind {
+                        // always keep returns, subscripts and imports
+                        if place.local.0 == 0 || !place.projection.is_empty() || matches!(rval, Rvalue::Import(_)) 
+                        {
                             return true;
                         }
-                        // Otherwise, only keep the assignment if it gets read later!
+
+                        // otherwise, only keep the assignment if it gets read later
                         read_counts.get(&place.local).unwrap_or(&0) > &0
                     } else {
                         true
                     }
                 });
 
-                // If we deleted something, loop again because downstream variables might now be dead!
+                // if we deleted something, loop again because downstream variables might now be dead
                 if block.statements.len() < original_len {
                     loop_changed = true;
                 }
@@ -297,6 +306,12 @@ impl Optimizer {
     fn count_reads(op: &Operand, counts: &mut HashMap<LocalID, usize>) {
         if let Operand::Copy(place) = op {
             *counts.entry(place.local).or_insert(0) += 1;
+
+            for proj in &place.projection {
+                if let ProjectionElem::Index(idx_local) = proj {
+                    *counts.entry(*idx_local).or_insert(0) += 1;
+                }
+            }
         }
     }
 }
