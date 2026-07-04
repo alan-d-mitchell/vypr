@@ -233,6 +233,17 @@ impl Compiler {
 
                 self.chunk.write(OpCode::FormatString(ops.len()), span);
             }
+
+            Rvalue::Length(op) => {
+                self.compile_operand(op, span)?;
+                self.chunk.write(OpCode::Length, span);
+            }
+
+            Rvalue::ListAppend(list_op, item_op) => {
+                self.compile_operand(list_op, span)?;
+                self.compile_operand(item_op, span)?;
+                self.chunk.write(OpCode::ListAppend, span);
+            }
         }
 
         Ok(())

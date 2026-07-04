@@ -143,6 +143,9 @@ impl fmt::Display for Rvalue {
                 }
                 write!(f, "}}")
             }
+
+            Rvalue::Length(op) => write!(f, "length({})", op),
+            Rvalue::ListAppend(list, item) => write!(f, "{}.append({})", list, item),
         }
     }
 }

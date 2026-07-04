@@ -37,6 +37,7 @@ pub enum OpCode {
     SetProperty(usize),  // object.name = value
 
     BuildList(usize),
+    ListAppend,
     BuildDict(usize),
     Length,
 
@@ -216,6 +217,7 @@ impl Chunk {
                 OpCode::SetLocal(idx) => writeln!(&mut s, "{:<16} {:4}", "SET_LOCAL", idx).unwrap(),
                 OpCode::Call(arg_count) => writeln!(&mut s, "{:<16} {:4}", "CALL", arg_count).unwrap(),
                 OpCode::BuildList(count) => writeln!(&mut s, "{:<16} {:4}", "BUILD_LIST", count).unwrap(),
+                OpCode::ListAppend => writeln!(&mut s, "LIST_APPEND").unwrap(),
 
                 OpCode::LessEqual => writeln!(&mut s, "LESS_EQUAL").unwrap(),
                 OpCode::GreaterEqual => writeln!(&mut s, "GREATER_EQUAL").unwrap(),

@@ -253,6 +253,7 @@ impl Serializer {
                 buf.push(0x27);
                 buf.extend_from_slice(&(*count as u32).to_be_bytes());
             }
+            OpCode::ListAppend => buf.push(0x28),
         }
     }
 }

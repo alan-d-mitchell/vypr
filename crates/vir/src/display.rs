@@ -142,6 +142,14 @@ impl fmt::Display for VIRExprKind {
 
                 write!(f, "\"")
             }
+
+            VIRExprKind::ListComp { expr, var_id, iterator, condition } => {
+                write!(f, "[{} for {} in {}", expr, var_id, iterator)?;
+                if let Some(cond) = condition {
+                    write!(f, " if {}", cond)?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }

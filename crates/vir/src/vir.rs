@@ -1,7 +1,6 @@
 use error::error::Span;
 use parser::ast::TypeExpr;
 use crate::context::VarID;
-use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct VIRProgram {
@@ -42,6 +41,13 @@ pub enum VIRExprKind {
     // 3. Data Structures
     ListInit {
         elements: Vec<VIRExpr>,
+    },
+
+    ListComp {
+        expr: Box<VIRExpr>,
+        var_id: VarID,
+        iterator: Box<VIRExpr>,
+        condition: Option<Box<VIRExpr>>,
     },
 
     DictInit {

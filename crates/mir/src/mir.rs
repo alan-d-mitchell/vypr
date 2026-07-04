@@ -69,6 +69,8 @@ pub enum Rvalue {
     Import(String),
     FunctionDef(Box<MIRFunction>),
     FormatString(Vec<Operand>),
+    Length(Operand),
+    ListAppend(Operand, Operand),
 }
 
 #[derive(Debug, Clone)]

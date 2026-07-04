@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use crate::mir::*;
 use lexer::token::TokenType;
-use vir::vir::{VIRFunction, VIRBlock, VIRStmt, VIRExpr, VIRExprKind};
+use vir::vir::{VIRFunction, VIRBlock, VIRStmt, VIRExpr, VIRExprKind, VIRBinOp};
 use parser::ast::TypeExpr;
-use vir::context::{Constant, VarID};
+use vir::context::Constant;
 
 pub struct MIRBuilder {
     is_script: bool,
@@ -530,6 +530,143 @@ impl MIRBuilder {
                 });
                 
                 Operand::Copy(target_place)
+            }
+
+            VIRExprKind::ListComp { expr: mapped_expr, var_id, iterator, condition } => {
+                // 1. Initialize the hidden output list: _temp_list = []
+                let list_local = self.new_local(TypeExpr::Atomic(TokenType::LIST), None);
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { local: list_local, projection: vec![] }, Rvalue::ListInit(vec![])),
+                    span: expr.span,
+                });
+
+                // 2. Evaluate the iterator into a local register
+                let iter_op = self.lower_expr(iterator);
+                let iter_local = match iter_op {
+                    Operand::Copy(p) => p.local,
+                    Operand::Static(_) => {
+                        let temp = self.new_local(TypeExpr::Any, None);
+
+                        self.push_statement(Statement {
+                            kind: StatementKind::Assign(Place { local: temp, projection: vec![] }, Rvalue::Use(iter_op)),
+                            span: expr.span,
+                        });
+
+                        temp
+                    }
+
+                    Operand::Const(_) => panic!("cannot iterate over a constant in list comp"),
+                };
+
+                // 3. Initialize the loop index: _idx = 0
+                let idx_local = self.new_local(TypeExpr::Atomic(TokenType::INT), None);
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { local: idx_local, projection: vec![] }, Rvalue::Use(Operand::Const(Constant::Int(0)))),
+                    span: expr.span,
+                });
+
+                // 4. Create the Basic Blocks
+                let header_bb = self.new_block();
+                let body_bb = self.new_block();
+                let exit_bb = self.new_block();
+
+                self.terminate_block(Terminator::Goto { target: header_bb });
+
+                // --- HEADER BLOCK ---
+                self.current_block = header_bb;
+                
+                let len_local = self.new_local(TypeExpr::Atomic(TokenType::INT), None);
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { 
+                        local: len_local, 
+                        projection: vec![] 
+                    }, 
+                    Rvalue::Length(Operand::Copy(Place { 
+                        local: iter_local, 
+                        projection: vec![] 
+                    }))),
+                    span: expr.span,
+                });
+
+                let cond_local = self.new_local(TypeExpr::Atomic(TokenType::BOOL), None);
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { 
+                        local: cond_local, 
+                        projection: vec![] 
+                    }, 
+                    Rvalue::BinaryOp(VIRBinOp::Lt, Operand::Copy(Place {
+                        local: idx_local, 
+                        projection: vec![] 
+                    }), 
+                    Operand::Copy(Place { local: len_local, projection: vec![] }))),
+                    span: expr.span,
+                });
+
+                self.terminate_block(Terminator::SwitchInt {
+                    discriminant: Operand::Copy(Place { local: cond_local, projection: vec![] }),
+                    true_target: body_bb,
+                    false_target: exit_bb,
+                });
+
+                // --- BODY BLOCK ---
+                self.current_block = body_bb;
+                
+                // Map the iteration variable (e.g., `x` = my_list[_idx])
+                let var_local = self.new_local(TypeExpr::Any, Some(var_id.1.clone()));
+                self.var_map.insert(var_id.0, var_local);
+                
+                let source_place = Place { local: iter_local, projection: vec![ProjectionElem::Index(idx_local)] };
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { local: var_local, projection: vec![] }, 
+                    Rvalue::Use(Operand::Copy(source_place))),
+                    span: expr.span,
+                });
+
+                let append_bb = self.new_block();
+                let step_bb = self.new_block();
+
+                if let Some(cond) = condition {
+                    let cond_op = self.lower_expr(cond);
+                    self.terminate_block(Terminator::SwitchInt {
+                        discriminant: cond_op,
+                        true_target: append_bb,
+                        false_target: step_bb, // Skip append if false
+                    });
+                } else {
+                    self.terminate_block(Terminator::Goto { target: append_bb });
+                }
+
+                // --- APPEND BLOCK ---
+                self.current_block = append_bb;
+                let mapped_op = self.lower_expr(mapped_expr);
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { local: list_local, projection: vec![] }, 
+                    Rvalue::ListAppend(Operand::Copy(Place { local: list_local, projection: vec![] }), mapped_op)),
+                    span: expr.span,
+                });
+                self.terminate_block(Terminator::Goto { target: step_bb });
+
+                // --- STEP BLOCK ---
+                self.current_block = step_bb;
+                let new_idx = self.new_local(TypeExpr::Atomic(TokenType::INT), None);
+
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { local: new_idx, projection: vec![] }, 
+                    Rvalue::BinaryOp(VIRBinOp::Add, Operand::Copy(Place { local: idx_local, projection: vec![] }), Operand::Const(Constant::Int(1)))),
+                    span: expr.span,
+                });
+
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { local: idx_local, projection: vec![] }, 
+                    Rvalue::Use(Operand::Copy(Place { local: new_idx, projection: vec![] }))),
+                    span: expr.span,
+                });
+
+                self.terminate_block(Terminator::Goto { target: header_bb });
+
+                // --- EXIT BLOCK ---
+                self.current_block = exit_bb;
+                Operand::Copy(Place { local: list_local, projection: vec![] })
             }
 
             _ => unimplemented!("[ICE] MIR lowering for this VIR expression is not yet implemented: {:?}", expr.kind),

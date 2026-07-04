@@ -390,7 +390,8 @@ impl VIRBuilder {
                     TokenType::GREATER_THAN_EQUAL => VIRBinOp::Ge, TokenType::AND => VIRBinOp::And,
                     TokenType::OR => VIRBinOp::Or,
                     TokenType::DOUBLE_FSLASH => VIRBinOp::FloorDiv,
-                    _ => unreachable!("[ICE] invalid binary operator"),
+                    TokenType::DOUBLE_STAR => VIRBinOp::Power,
+                    _ => unreachable!("[ICE] invalid binary operator: {:?}", operator),
                 };
                 VIRExprKind::Binary { op, lhs: Box::new(self.lower_expr(left)), rhs: Box::new(self.lower_expr(right)) }
             }
@@ -456,7 +457,24 @@ impl VIRBuilder {
                 VIRExprKind::FormatString(lowered_parts)
             } 
 
-            _ => unimplemented!("[ICE] lowering for this AST expression is not yet implemented: {:?}", expr.kind),
+            ExprKind::ListComp { expr: mapped, var, iterator, condition } => {
+                self.enter_scope();
+
+                let var_id = self.define_var(var.clone(), TypeExpr::Any);
+
+                let vir_iterator = self.lower_expr(iterator);
+                let vir_condition = condition.as_ref().map(|c| Box::new(self.lower_expr(c)));
+                let vir_expr = self.lower_expr(mapped);
+
+                self.exit_scope();
+
+                VIRExprKind::ListComp {
+                    expr: Box::new(vir_expr),
+                    var_id,
+                    iterator: Box::new(vir_iterator),
+                    condition: vir_condition,
+                }
+            }
         };
 
         let inferred_type = match &kind {

@@ -475,6 +475,18 @@ impl VM {
                     }
                 }
 
+                OpCode::ListAppend => {
+                    let item = self.pop()?;
+                    let list = self.pop()?;
+                    
+                    if let Value::List(items) = &list {
+                        items.borrow_mut().push(item);
+                        self.push(list);                    
+                    } else {
+                        return Err(self.error("R002", "append target must be a list"));
+                    }
+                }
+
                 OpCode::Pop => { self.pop()?; }
 
                 OpCode::Jump(offset) => {
