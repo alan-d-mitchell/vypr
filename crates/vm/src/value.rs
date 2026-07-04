@@ -14,6 +14,7 @@ pub enum DataType {
     Str,
     Bool,
     List,
+    Dict,
     Range,
     None,
     Function,
@@ -29,6 +30,7 @@ impl fmt::Display for DataType {
             DataType::Str => write!(f, "'str'"),
             DataType::Bool => write!(f, "'bool'"),
             DataType::List => write!(f, "'list'"),
+            DataType::Dict => write!(f, "'dict'"),
             DataType::Range => write!(f, "'range'"),
             DataType::None => write!(f, "'None'"),
             DataType::Function => write!(f, "'function'"),
@@ -77,6 +79,7 @@ pub enum Value {
     Bool(bool),
     Str(String),
     List(Rc<RefCell<Vec<Value>>>),
+    Dict(Rc<RefCell<HashMap<String, Value>>>),
     Range(i64, i64),
     None,
     Native(NativeFunction),
@@ -94,6 +97,7 @@ impl Value {
             Value::Bool(_) => DataType::Bool,
             Value::Str(_) => DataType::Str,
             Value::List(_) => DataType::List,
+            Value::Dict(_) => DataType::Dict,
             Value::None => DataType::None,
             Value::Native(_) | Value::Function(_, _, _) => DataType::Function,
             Value::Range(_, _) => DataType::Range,
@@ -128,10 +132,20 @@ impl Value {
                 let borrowed = items.borrow();
                 let elements: Vec<String> = borrowed.iter().map(|v| v.repr_inner(depth + 1)).collect();
 
-                return format!("[{}]", elements.join(", "));
+                format!("[{}]", elements.join(", "))
             },
 
-            _ => return format!("{}", self)
+            Value::Dict(dict) => {
+                let borrowed = dict.borrow();
+                let mut elements = Vec::new();
+                for (k, v) in borrowed.iter() {
+                    elements.push(format!("'{}': {}", k, v.repr_inner(depth + 1)));
+                }
+
+                format!("{{{}}}", elements.join(", "))
+            },
+
+            _ => format!("{}", self)
         }
     }
 }
@@ -150,6 +164,7 @@ impl fmt::Display for Value {
             Value::Bool(v) => write!(f, "{}", v),
             Value::Str(v) => write!(f, "{}", v),
             Value::List(_) => write!(f, "{}", self.repr_inner(0)),
+            Value::Dict(_) => write!(f, "{}", self.repr_inner(0)),
             Value::Range(start, stop) => write!(f, "range({}, {})", start, stop),
             Value::None => write!(f, "None"),
             Value::Native(function) => write!(f, "<built-in function {}>", function.name),

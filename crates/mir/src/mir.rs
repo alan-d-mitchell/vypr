@@ -65,6 +65,7 @@ pub enum Rvalue {
     BinaryOp(VIRBinOp, Operand, Operand),
     UnaryOp(VIRUnaryOp, Operand),
     ListInit(Vec<Operand>),
+    DictInit(Vec<Operand>, Vec<Operand>),
     Import(String),
     FunctionDef(Box<MIRFunction>),
     FormatString(Vec<Operand>),

@@ -6,6 +6,7 @@ pub enum TypeExpr {
     Any,
     Atomic(TokenType),
     List(Box<TypeExpr>),
+    Dict(Box<TypeExpr>, Box<TypeExpr>),
     Union(Box<TypeExpr>, Box<TypeExpr>),
 }
 
@@ -19,12 +20,14 @@ impl std::fmt::Display for TypeExpr {
                 TokenType::BOOL => write!(f, "'bool'"),
                 TokenType::NONE => write!(f, "'None'"),
                 TokenType::LIST => write!(f, "'list'"),
+                TokenType::DICT => write!(f, "'dict'"),
                 TokenType::RANGE => write!(f, "'range'"),
                 _ => write!(f, "any")
             },
 
             TypeExpr::Any => write!(f, "any"),
             TypeExpr::List(inner) => write!(f, "list[{}]", inner),
+            TypeExpr::Dict(k, v) => write!(f, "dict[{}, {}]", k, v),
             TypeExpr::Union(left, right) => write!(f, "{} | {}", left, right),
         }
     }
@@ -136,6 +139,8 @@ pub enum ExprKind {
         iterator: Box<Expr>,
         condition: Option<Box<Expr>>,
     },
+
+    Dict(Vec<(Expr, Expr)>),
 
     FString(Vec<Expr>),
 }

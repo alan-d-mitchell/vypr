@@ -71,6 +71,7 @@ impl Serializer {
             DataType::List     => buf.push(0x07),
             DataType::Range    => buf.push(0x08),
             DataType::Module   => buf.push(0x09),
+            DataType::Dict => buf.push(0x0A),
         }
     }
 
@@ -130,10 +131,25 @@ impl Serializer {
                 self.file.write_all(&stop.to_le_bytes())?;
             }
 
+            Value::Dict(dict) => {
+                self.file.write_all(&[0x09])?;
+
+                let borrowed = dict.borrow();
+                let len = borrowed.len() as u32;
+
+                self.file.write_all(&len.to_be_bytes())?;
+
+                for (k, v) in borrowed.iter() {
+                    self.write_value(&Value::Str(k.clone()))?;
+                    self.write_value(v)?;
+                }
+            }
+
             Value::UnloadedModule(_) | Value::Module(_) => {
                 unreachable!("live modules are never serialized into the constant pool");
             }
         }
+
         Ok(())
     }
 
@@ -233,6 +249,10 @@ impl Serializer {
             }
             OpCode::And => buf.push(0x25),
             OpCode::Or => buf.push(0x26),
+            OpCode::BuildDict(count) => {
+                buf.push(0x27);
+                buf.extend_from_slice(&(*count as u32).to_be_bytes());
+            }
         }
     }
 }
