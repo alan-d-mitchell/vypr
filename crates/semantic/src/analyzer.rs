@@ -18,7 +18,7 @@ impl Analyzer {
             params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::INT) 
         }, true);
-        
+
         // float(any) -> float
         global_scope.define("float".to_string(), SymbolType::Function { 
             params: vec![TypeExpr::Any], 
@@ -30,7 +30,7 @@ impl Analyzer {
             params: vec![TypeExpr::Any], 
             return_type: TypeExpr::Atomic(TokenType::STR) 
         }, true);
-        
+
         // print(any) -> None (Actually variadic, but treating as 1 arg of Any for simple checking)
         global_scope.define("print".to_string(), SymbolType::Function { 
             params: vec![TypeExpr::Any], 
@@ -76,7 +76,7 @@ impl Analyzer {
 
         Ok(())
     }
-    
+
     fn visit_stmt(&mut self, stmt: &Stmt) -> Result<(), VyprError> {
         let span = stmt.span;
 
@@ -190,7 +190,7 @@ impl Analyzer {
                 self.loop_depth += 1;
 
                 self.enter_scope();
-                
+
                 self.define(var.clone(), SymbolType::Locked(item_type), true);
 
                 for s in body {
@@ -286,7 +286,7 @@ impl Analyzer {
                 }
             },
 
-           ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args } => {
                 if let ExprKind::Variable(func_name) = &callee.kind {
                     let signature = self.resolve(func_name).and_then(|sym| {
                         if let SymbolType::Function { params, return_type } = &sym.kind {
@@ -334,7 +334,18 @@ impl Analyzer {
                 }
 
                 Err(self.error("S008", "cannot verify signatures of callee", span))
-            }, 
+            },
+
+            ExprKind::Assign { target, value } => {
+                let target_type = self.infer_type(target)?;
+                let value_type = self.infer_type(value)?;
+
+                if !self.types_match(&target_type, &value_type) {
+                    return Err(self.error("S019", format!("type error: cannot assign {} to {}", value_type, target_type), span));
+                }
+
+                Ok(value_type)
+            }
 
             // eventually need to migrate this match arm to a separate file called "methods.rs"
             // that will just house all the built in methods i choose to implement for the primitive types
@@ -365,7 +376,7 @@ impl Analyzer {
                             (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::INT)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
 
                             (TypeExpr::Atomic(TokenType::STR), TypeExpr::Atomic(TokenType::STR)) => Ok(TypeExpr::Atomic(TokenType::STR)),
-                            
+
                             _ => Err(self.error("S017", format!("unsupported operand types for +: {} and {}", left_type, right_type), span))
                         }
                     },
@@ -385,7 +396,7 @@ impl Analyzer {
 
                             (TypeExpr::Atomic(TokenType::INT), TypeExpr::Atomic(TokenType::FLOAT)) |
                             (TypeExpr::Atomic(TokenType::FLOAT), TypeExpr::Atomic(TokenType::INT)) => Ok(TypeExpr::Atomic(TokenType::FLOAT)),
-                            
+
                             _ => Err(self.error("S017", format!("unsupported operand types for math operator: {} and {}", left_type, right_type), span))
                         }
                     },
@@ -470,7 +481,7 @@ impl Analyzer {
                     TypeExpr::Atomic(TokenType::RANGE) => TypeExpr::Atomic(TokenType::INT),
                     TypeExpr::Atomic(TokenType::LIST) => TypeExpr::Any,
                     TypeExpr::Any => TypeExpr::Any,
-                    
+
                     _ => return Err(self.error("S018", format!("type error: type {} is not iterable", iterator_type), span))
                 };
 
@@ -481,7 +492,7 @@ impl Analyzer {
                 if let Some(cond) = condition {
                     self.infer_type(cond)?;
                 }
-                
+
                 let mapped_type = self.infer_type(expr)?;
 
                 self.exit_scope();

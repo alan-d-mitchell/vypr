@@ -83,8 +83,9 @@ pub fn vypr_len(args: &[Value]) -> Result<Value, VyprError> {
             let len = if stop > start { stop - start } else { 0 };
             Ok(Value::Int(len))
         },
+        Value::Dict(dict) => Ok(Value::Int(dict.borrow().len() as i64)),
 
-        _ => Err(error("R002", format!("object of type '{}' has no len()", args[0].get_type())))
+        _ => Err(error("R002", format!("object of type {} has no len()", args[0].get_type())))
     }
 }
 

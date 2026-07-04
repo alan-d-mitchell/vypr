@@ -633,8 +633,32 @@ impl<'p> Parser<'p> {
         Ok(statements)
     }
 
+    fn assignment(&mut self) -> Result<Expr, VyprError> {
+        let expr = self.logic_or()?;
+
+        if self.match_token(TokenType::EQUAL) {
+            let value = self.assignment()?;
+            let span = expr.span;
+            
+            match &expr.kind {
+                ExprKind::Variable(_) | ExprKind::Subscript { .. } => {
+                    return Ok(Expr {
+                        kind: ExprKind::Assign {
+                            target: Box::new(expr),
+                            value: Box::new(value)
+                        },
+                        span
+                    });
+                }
+                _ => return Err(self.make_error("P021", "invalid assignment target"))
+            }
+        }
+
+        Ok(expr)
+    }
+
     pub fn expression(&mut self) -> Result<Expr, VyprError> {
-        self.logic_or()
+        self.assignment()
     }
 
     fn logic_not(&mut self) -> Result<Expr, VyprError> {

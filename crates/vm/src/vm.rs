@@ -271,7 +271,6 @@ impl VM {
                         }
                     }
 
-                    // If it's not a module, let your custom method handler take over
                     self.invoke_method(name_idx, arg_count)?;
                 }
 
@@ -279,13 +278,12 @@ impl VM {
                     let index_val = self.pop()?;
                     let list_val = self.pop()?;
 
-                    let index = match index_val {
-                        Value::Int(i) => i,
-                        _ => return Err(self.error("R002", "list index must be an integer"))
-                    };
-
                     match list_val {
                         Value::List(items) => {
+                            let index = match index_val {
+                                Value::Int(i) => i,
+                                _ => return Err(self.error("R002", "list index must be an integer"))
+                            };
                             let borrowed = items.borrow();
 
                             let effective_index = if index < 0 {
@@ -301,20 +299,11 @@ impl VM {
                             self.push(borrowed[effective_index as usize].clone());
                         }
 
-                        Value::Dict(dict) => {
-                            let key_str = match index_val {
-                                Value::Str(s) => s,
-                                _ => index_val.to_string(),
-                            };
-
-                            if let Some(val) = dict.borrow().get(&key_str) {
-                                self.push(val.clone());
-                            } else {
-                                return Err(self.error("R003", format!("key '{}' does not exist", key_str)));
-                            }
-                        }
-
                         Value::Str(s) => {
+                            let index = match index_val {
+                                Value::Int(i) => i,
+                                _ => return Err(self.error("R002", "string index must be an integer"))
+                            };
                             let char_count = s.chars().count() as i64;
 
                             let effective_index = if index < 0 {
@@ -335,6 +324,10 @@ impl VM {
                         }
 
                         Value::Range(start, stop) => {
+                            let index = match index_val {
+                                Value::Int(i) => i,
+                                _ => return Err(self.error("R002", "range index must be an integer"))
+                            };
                             let len = if stop > start { stop - start } else { 0 };
                             let effective_index = if index < 0 { len + index } else { index };
 
@@ -345,22 +338,34 @@ impl VM {
                             self.push(Value::Int(start + effective_index));
                         }
 
+                        Value::Dict(dict) => {
+                            let key_str = match index_val {
+                                Value::Str(s) => s,
+                                _ => index_val.to_string(),
+                            };
+                            
+                            if let Some(val) = dict.borrow().get(&key_str) {
+                                self.push(val.clone());
+                            } else {
+                                return Err(self.error("R003", format!("key '{}' does not exist", key_str)));
+                            }
+                        }
+
                         _ => return Err(self.error("R002", "object is not subscriptable"))
                     }
                 }
 
                 OpCode::SetSubscript => {
-                    let index_val = self.pop()?; // Top of stack is Index
-                    let list_val = self.pop()?;  // Middle of stack is Base
-                    let value = self.pop()?;     // Bottom of stack is the assigned Value
-
-                    let index = match index_val {
-                        Value::Int(i) => i,
-                        _ => return Err(self.error("R002", "list index must be an integer"))
-                    };
+                    let index_val = self.pop()?;
+                    let list_val = self.pop()?;
+                    let value = self.pop()?;
 
                     match list_val {
                         Value::List(items) => {
+                            let index = match index_val {
+                                Value::Int(i) => i,
+                                _ => return Err(self.error("R002", "list index must be an integer"))
+                            };
                             let mut borrowed = items.borrow_mut();
                             let effective_index = if index < 0 {
                                 borrowed.len() as i64 + index
@@ -374,7 +379,7 @@ impl VM {
 
                             borrowed[effective_index as usize] = value;
                         }
-
+                        
                         Value::Dict(dict) => {
                             let key_str = match index_val {
                                 Value::Str(s) => s,
