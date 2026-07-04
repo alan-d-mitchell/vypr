@@ -15,7 +15,7 @@ struct Cli {
     #[arg(value_name = "INPUT")]
     input: Option<String>,
 
-    #[arg(long, value_name = "TYPES", help = "comma separated list of types to emit: tokens, ast, vir, mir, chunk, vyc")]
+    #[arg(long, value_name = "TYPES", help = "comma separated list of types to emit: tokens, ast, vir, mir, mir-opt chunk, vyc")]
     emit: Option<String>,
 
     #[arg(short, long, value_name = "OUTPUT", help = "specify name of output file")]
@@ -28,6 +28,7 @@ enum EmitType {
     Ast,
     Vir,
     Mir,
+    MirOpt,
     Chunk,
     Vyc,
 }
@@ -50,6 +51,7 @@ fn parse_emit_flag(s: &str) -> Vec<EmitType> {
                 "ast" => Some(EmitType::Ast),
                 "vir" => Some(EmitType::Vir),
                 "mir" => Some(EmitType::Mir),
+                "mir-opt" => Some(EmitType::MirOpt),
                 "chunk" => Some(EmitType::Chunk),
                 "vyc" => Some(EmitType::Vyc),
                 _ => {
@@ -81,6 +83,7 @@ fn main() {
     let emit_ast = emit_types.contains(&EmitType::Ast);
     let emit_vir = emit_types.contains(&EmitType::Vir);
     let emit_mir = emit_types.contains(&EmitType::Mir);
+    let emit_mir_opt = emit_types.contains(&EmitType::MirOpt);
     let emit_chunk = emit_types.contains(&EmitType::Chunk);
     let emit_vyc = emit_types.contains(&EmitType::Vyc);
 
@@ -180,6 +183,15 @@ fn main() {
         let fname = input_path.with_extension("mir").to_string_lossy().into_owned();
         fs::write(&fname, output).ok();
         println!("[INFO] mir written to: {}", fname);
+    }
+
+    mir::optimizer::Optimizer::optimize(&mut mir_program);
+
+    if emit_mir_opt {
+        let output = format!("{}", mir_program);
+        let fname = input_path.with_extension("opt.mir").to_string_lossy().into_owned();
+        fs::write(&fname, output).ok();
+        println!("[INFO] optimized mir written to: {}", fname);
     }
 
     // --- PHASE 6: COMPILATION ---
