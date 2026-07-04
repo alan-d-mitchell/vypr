@@ -98,8 +98,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "lexer",
+ "mir",
  "parser",
  "semantic",
+ "vir",
  "vm",
 ]
 
