@@ -173,6 +173,22 @@ impl<'p> Parser<'p> {
                 }
             }
 
+            TokenType::DICT => {
+                if self.match_token(TokenType::LBRACKET) {
+                    let key_type = self.parse_type_annotation()?;
+                    self.consume(TokenType::COMMA, "expected ',' between dict key and value types")?;
+                    let value_type = self.parse_type_annotation()?;
+
+                    if !self.match_token(TokenType::RBRACKET) {
+                        return Err(self.make_error("P001", "expected ']' after dict type"))
+                    }
+
+                    TypeExpr::Dict(Box::new(key_type), Box::new(value_type))
+                } else {
+                    TypeExpr::Atomic(TokenType::DICT)
+                }
+            }
+
             _ => return Err(self.make_error("P002", format!("expected type, found {}", token.lexeme))),
         };
 
@@ -506,6 +522,33 @@ impl<'p> Parser<'p> {
 
         Ok(ExprKind::List(elements))
     }
+
+    fn dict_literal(&mut self) -> Result<ExprKind, VyprError> {
+        if self.match_token(TokenType::RBRACE) {
+            return Ok(ExprKind::Dict(Vec::new()));
+        }
+
+        let mut elements = Vec::new();
+        loop {
+            if self.check(TokenType::RBRACE) {
+                break;
+            }
+
+            let key = self.expression()?;
+            self.consume(TokenType::COLON, "expected ':' after dictionary key")?;
+            let value = self.expression()?;
+
+            elements.push((key, value));
+
+            if !self.match_token(TokenType::COMMA) {
+                break;
+            }
+        }
+
+        self.consume(TokenType::RBRACE, "expected '}' after dictionary")?;
+
+        Ok(ExprKind::Dict(elements))
+    }
     
     fn function_declaration(&mut self) -> Result<Stmt<'p>, VyprError> {
         let span = self.previous().span;
@@ -795,6 +838,8 @@ impl<'p> Parser<'p> {
                 self.consume(TokenType::RPAREN, "expected ')' after expression")?;
                 ExprKind::Grouping(Box::new(expr))
             }
+
+            TokenType::LBRACE => self.dict_literal()?,
 
             _ => return Err(self.make_error("P013", format!("expected expression, found {}", token.lexeme)))
         };

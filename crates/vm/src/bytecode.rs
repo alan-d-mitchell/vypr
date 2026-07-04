@@ -37,6 +37,7 @@ pub enum OpCode {
     SetProperty(usize),  // object.name = value
 
     BuildList(usize),
+    BuildDict(usize),
     Length,
 
     Call(usize),

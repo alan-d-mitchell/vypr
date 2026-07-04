@@ -134,6 +134,15 @@ impl fmt::Display for Rvalue {
 
                 write!(f, ")")
             }
+
+            Rvalue::DictInit(keys, values) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in keys.iter().zip(values.iter()).enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}: {}", k, v)?;
+                }
+                write!(f, "}}")
+            }
         }
     }
 }

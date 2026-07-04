@@ -90,14 +90,6 @@ impl VM {
             lock: DataType::Function
         });
 
-        globals.insert("input".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
-                name: "input".to_string(),
-                function: builtins::vypr_input
-            }),
-            lock: DataType::Function
-        });
-
         let main_frame = CallFrame {
             chunk,
             ip: 0,
@@ -309,6 +301,19 @@ impl VM {
                             self.push(borrowed[effective_index as usize].clone());
                         }
 
+                        Value::Dict(dict) => {
+                            let key_str = match index_val {
+                                Value::Str(s) => s,
+                                _ => index_val.to_string(),
+                            };
+
+                            if let Some(val) = dict.borrow().get(&key_str) {
+                                self.push(val.clone());
+                            } else {
+                                return Err(self.error("R003", format!("key '{}' does not exist", key_str)));
+                            }
+                        }
+
                         Value::Str(s) => {
                             let char_count = s.chars().count() as i64;
 
@@ -369,6 +374,15 @@ impl VM {
 
                             borrowed[effective_index as usize] = value;
                         }
+
+                        Value::Dict(dict) => {
+                            let key_str = match index_val {
+                                Value::Str(s) => s,
+                                _ => index_val.to_string(),
+                            };
+                            dict.borrow_mut().insert(key_str, value);
+                        }
+
                         _ => return Err(self.error("R002", "object does not support item assignment"))
                     }
                 }
@@ -422,10 +436,29 @@ impl VM {
                     self.push(Value::List(Rc::new(RefCell::new(items))));
                 }
 
+                OpCode::BuildDict(count) => {
+                    let mut dict = HashMap::with_capacity(count);
+
+                    for _ in 0..count {
+                        let value = self.pop()?;
+                        let key = self.pop()?;
+
+                        let key_str = match key {
+                            Value::Str(s) => s,
+                            _ => key.to_string(), 
+                        };
+
+                        dict.insert(key_str, value);
+                    }
+
+                    self.push(Value::Dict(Rc::new(RefCell::new(dict))));
+                }
+
                 OpCode::Length => {
                     let val = self.pop()?;
                     match val {
                         Value::List(items) => self.push(Value::Int(items.borrow().len() as i64)),
+                        Value::Dict(dict) => self.push(Value::Int(dict.borrow().len() as i64)),
                         Value::Str(s) => self.push(Value::Int(s.chars().count() as i64)),
 
                         Value::Range(start, stop) => {
