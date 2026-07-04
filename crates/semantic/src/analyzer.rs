@@ -1,4 +1,4 @@
-use crate::scope::{Scope, SymbolType};
+use crate::scope::{Scope, SymbolType, Symbol};
 use parser::ast::{Expr, ExprKind, Stmt, StmtKind, TypeExpr};
 use lexer::token::TokenType;
 use error::error::{Span, VyprError};
@@ -415,25 +415,31 @@ impl Analyzer {
             },
 
             ExprKind::Subscript { callee, index } => {
-                let list_type = self.infer_type(callee)?;
+                let base_type = self.infer_type(callee)?;
                 let index_type = self.infer_type(index)?;
 
-                if !self.types_match(&TypeExpr::Atomic(TokenType::INT), &index_type) {
-                    return Err(self.error("S010", format!("list indices must be integers, not {}", index_type), span));
-                }
+                match base_type {
+                    TypeExpr::List(inner) => {
+                        if !self.types_match(&TypeExpr::Atomic(TokenType::INT), &index_type) {
+                            return Err(self.error("S010", format!("list indices must be integers, not {}", index_type), span));
+                        }
 
-                match list_type {
-                    TypeExpr::List(inner) => Ok(*inner),
+                        Ok(*inner)
+                    },
 
-                    TypeExpr::Atomic(TokenType::LIST) => {
+                    TypeExpr::Dict(k_type, v_type) => {
+                        if !self.types_match(&k_type, &index_type) {
+                            return Err(self.error("S010", format!("dict key expected type {}, got {}", k_type, index_type), span));
+                        }
+
+                        Ok(*v_type)
+                    },
+
+                    TypeExpr::Atomic(TokenType::LIST) | TypeExpr::Atomic(TokenType::DICT) | TypeExpr::Any => {
                         Ok(TypeExpr::Any)
                     }
 
-                    TypeExpr::Any => {
-                        Ok(TypeExpr::Any)
-                    }
-
-                    _ => Err(self.error("S011", format!("type {} is not subscriptable", list_type), span))
+                    _ => Err(self.error("S011", format!("type {} is not subscriptable", base_type), span))
                 }
             }
 
@@ -483,6 +489,30 @@ impl Analyzer {
                 Ok(TypeExpr::List(Box::new(mapped_type)))
             }
 
+            ExprKind::Dict(elements) => {
+                if elements.is_empty() {
+                    Ok(TypeExpr::Atomic(TokenType::DICT))
+                } else {
+                    let mut key_type = self.infer_type(&elements[0].0)?;
+                    let mut value_type = self.infer_type(&elements[0].1)?;
+
+                    for (k, v) in elements.iter().skip(1) {
+                        let current_key = self.infer_type(k)?;
+                        let current_value = self.infer_type(v)?;
+
+                        if !self.types_match(&key_type, &current_key) {
+                            key_type = TypeExpr::Union(Box::new(key_type), Box::new(current_key));
+                        }
+
+                        if !self.types_match(&value_type, &current_value) {
+                            value_type = TypeExpr::Union(Box::new(value_type), Box::new(current_value));
+                        }
+                    }
+
+                    Ok(TypeExpr::Dict(Box::new(key_type), Box::new(value_type)))
+                }
+            }
+
             ExprKind::Grouping(inner) => self.infer_type(inner),
 
             ExprKind::FString(parts) => {
@@ -509,7 +539,7 @@ impl Analyzer {
         self.scopes.last_mut().unwrap().define(name, kind, initialized);
     }
 
-    fn resolve(&self, name: &str) -> Option<&crate::scope::Symbol> {
+    fn resolve(&self, name: &str) -> Option<&Symbol> {
         for scope in self.scopes.iter().rev() {
             if let Some(sym) = scope.get(name) {
                 return Some(sym);
@@ -540,6 +570,13 @@ impl Analyzer {
 
             (TypeExpr::Atomic(TokenType::LIST), TypeExpr::List(_)) => true,
             (TypeExpr::List(_), TypeExpr::Atomic(TokenType::LIST)) => true,
+
+            (TypeExpr::Dict(k_exp, v_exp), TypeExpr::Dict(k_act, v_act)) => {
+                self.types_match(k_exp, k_act) && self.types_match(v_exp, v_act)
+            }
+
+            (TypeExpr::Atomic(TokenType::DICT), TypeExpr::Dict(_, _)) => true,
+            (TypeExpr::Dict(_, _), TypeExpr::Atomic(TokenType::DICT)) => true,
 
             _ => false,
         }

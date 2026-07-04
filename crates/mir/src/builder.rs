@@ -368,6 +368,27 @@ impl MIRBuilder {
                 Operand::Copy(target_place)
             }
 
+            VIRExprKind::DictInit { keys, values } => {
+                let mut key_ops = Vec::new();
+                let mut val_ops = Vec::new();
+
+                for k in keys { key_ops.push(self.lower_expr(k)); }
+                for v in values { val_ops.push(self.lower_expr(v)); }
+
+                let temp_local = self.new_local(TypeExpr::Any, None);
+                let target_place = Place { local: temp_local, projection: vec![] };
+
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(
+                        target_place.clone(),
+                        Rvalue::DictInit(key_ops, val_ops)
+                    ),
+                    span: expr.span,
+                });
+
+                Operand::Copy(target_place)
+            }
+
             VIRExprKind::SubscriptAccess { base, index } => {
                 let base_op = self.lower_expr(base);
                 let index_op = self.lower_expr(index);

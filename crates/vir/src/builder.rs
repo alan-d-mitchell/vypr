@@ -428,6 +428,18 @@ impl VIRBuilder {
                 VIRExprKind::ListInit { elements: lowered_elements }
             }
 
+            ExprKind::Dict(elements) => {
+                let mut keys = Vec::new();
+                let mut values = Vec::new();
+
+                for (k, v) in elements {
+                    keys.push(self.lower_expr(k));
+                    values.push(self.lower_expr(v));
+                }
+
+                VIRExprKind::DictInit { keys, values }
+            }
+ 
             ExprKind::Grouping(inner) => {
                 return self.lower_expr(inner);
             }

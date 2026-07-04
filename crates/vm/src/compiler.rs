@@ -198,7 +198,17 @@ impl Compiler {
                 for element in elements {
                     self.compile_operand(element, span)?;
                 }
+
                 self.chunk.write(OpCode::BuildList(elements.len()), span);
+            }
+
+            Rvalue::DictInit(keys, values) => {
+                for (k, v) in keys.iter().zip(values.iter()) {
+                    self.compile_operand(k, span)?;
+                    self.compile_operand(v, span)?;
+                }
+
+                self.chunk.write(OpCode::BuildDict(keys.len()), span);
             }
 
             Rvalue::Import(module) => {
@@ -220,6 +230,7 @@ impl Compiler {
                 for op in ops {
                     self.compile_operand(op, span)?;
                 }
+
                 self.chunk.write(OpCode::FormatString(ops.len()), span);
             }
         }
