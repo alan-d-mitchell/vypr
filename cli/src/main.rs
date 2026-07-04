@@ -2,8 +2,10 @@ use std::{env, fs, path::{Path}, process::{self}, collections::HashSet};
 use clap::{CommandFactory, Parser as ClapParser};
 
 use lexer::lexer::Lexer;
+use mir::{builder::MIRBuilder, mir::MIRProgram};
 use parser::parser::Parser;
 use semantic::analyzer::Analyzer;
+use vir::builder::VIRBuilder;
 use vm::{compiler::Compiler, serializer::{self, Serializer}};
 use vm::vm::VM;
 
@@ -121,7 +123,6 @@ fn main() {
         }
     };
 
-    // --- PHASE 1: LEXER ---
     let mut lexer = Lexer::new(&contents);
     let tokens = lexer.tokenize();
 
@@ -144,7 +145,6 @@ fn main() {
         println!("[INFO] tokens written to: {}", fname);
     }
 
-    // --- PHASE 2: PARSER ---
     let mut parser = Parser::new(tokens);
     let ast = parser.parse();
 
@@ -167,7 +167,6 @@ fn main() {
         println!("[INFO] ast nodes written to: {}", fname);
     }
     
-    // --- PHASE 3: SEMANTIC ANALYSIS ---
     let mut analyzer = Analyzer::new();
     if let Err(e) = analyzer.analyze(&ast) {
         e.report(&contents, &input);
@@ -175,9 +174,22 @@ fn main() {
         process::exit(1);
     }
 
-    // --- PHASE 4: COMPILATION ---
+    let mut vir_builder = VIRBuilder::new();
+    vir_builder.inject_globals(analyzer.export_globals());
+    let vir_program = vir_builder.build(&ast);
+
+    let mut mir_program = MIRProgram { functions: Vec::new() };
+    for function in vir_program.functions {
+        let is_script = function.name == "<script>";
+
+        let mir_builder = MIRBuilder::new(is_script);
+        let mir_function = mir_builder.build_function(function);
+
+        mir_program.functions.push(mir_function);
+    }
+
     let compiler = Compiler::new();
-    match compiler.compile(ast) {
+    match compiler.compile_program(&mir_program) {
         Ok(chunk) => {
             
             if let Some(mode) = bytecode_mode {
@@ -185,7 +197,6 @@ fn main() {
                     .unwrap_or(std::ffi::OsStr::new("script"))
                     .to_string_lossy();
 
-                // 1. Emit .chunk (Debug Text)
                 if *mode == BytecodeMode::Debug || *mode == BytecodeMode::Both {
                     let output = chunk.disassemble(&script_name);
                     let debug_fname = input_path.with_extension("chunk").to_string_lossy().into_owned();
@@ -193,7 +204,6 @@ fn main() {
                     println!("[INFO] debug bytecode written to: {}", debug_fname);
                 }
 
-                // 2. Emit .vyc (Binary Serialized)
                 if *mode == BytecodeMode::Binary || *mode == BytecodeMode::Both {
                     let fname = input_path.with_extension("vyc").to_string_lossy().into_owned();
                     let mut serializer = Serializer::new(&fname).expect("failed to create .vyc file");
@@ -205,14 +215,10 @@ fn main() {
                 }
             }
 
-            // --- FINAL STOP CHECK ---
-            // If we emitted anything, we STOP here. 
-            // If the user provided NO emit flags, we RUN the VM.
             if !emit_types.is_empty() {
                 return;
             }
 
-            // --- PHASE 5: EXECUTION ---
             let mut vm = VM::new(chunk);
             if let Err(e) = vm.run() {
                 e.report(&contents, &input);
