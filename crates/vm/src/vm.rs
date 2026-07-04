@@ -90,14 +90,6 @@ impl VM {
             lock: DataType::Function
         });
 
-        globals.insert("input".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
-                name: "input".to_string(),
-                function: builtins::vypr_input
-            }),
-            lock: DataType::Function
-        });
-
         let main_frame = CallFrame {
             chunk,
             ip: 0,

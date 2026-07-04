@@ -58,11 +58,6 @@ impl Analyzer {
             return_type: TypeExpr::Atomic(TokenType::LIST)
         }, true);
 
-        global_scope.define("input".to_string(), SymbolType::Function {
-            params: vec![TypeExpr::Any],
-            return_type: TypeExpr::Any
-        }, true);
-
         Self {
             scopes: vec![global_scope], // Start with global scope
             current_return_type: None,
