@@ -9,6 +9,8 @@ clap = { version = "4.3", features = ["derive"] }
 lexer = { path = "../crates/lexer/" }
 parser = { path = "../crates/parser/" }
 semantic = { path = "../crates/semantic/" }
+vir = { path = "../crates/vir/" }
+mir = { path = "../crates/mir" }
 vm = { path = "../crates/vm/" }
 
 [[bin]]
