@@ -15,7 +15,7 @@ struct Cli {
     #[arg(value_name = "INPUT")]
     input: Option<String>,
 
-    #[arg(long, value_name = "TYPES", help = "comma separated list of types to emit: tokens, ast, hir, mir, chunk, vyc")]
+    #[arg(long, value_name = "TYPES", help = "comma separated list of types to emit: tokens, ast, vir, mir, chunk, vyc")]
     emit: Option<String>,
 
     #[arg(short, long, value_name = "OUTPUT", help = "specify name of output file")]
