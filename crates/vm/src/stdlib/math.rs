@@ -14,15 +14,15 @@ pub fn create_module() -> Value {
     exports.insert("e".to_string(), Value::Float(consts::E));
 
     // Export Functions
-    exports.insert("sqrt".to_string(), Value::Native(NativeFunction {
+    exports.insert("sqrt".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "sqrt".to_string(),
         function: math_sqrt,
-    }));
+    })));
 
-    exports.insert("abs".to_string(), Value::Native(NativeFunction {
+    exports.insert("abs".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "abs".to_string(),
         function: math_abs,
-    }));
+    })));
 
     Value::Module(Rc::new(Module {
         name: "math".to_string(),

@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::rc::Rc;
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::bytecode::{Chunk, OpCode};
@@ -108,10 +109,10 @@ impl Serializer {
                 self.file.write_all(&[0x05])?; // Write None placeholder
             }
 
-            Value::Function(_, _, chunk) => {
+            Value::Function(function) => {
                 self.file.write_all(&[0x06])?;
                 // Recursive serialization for function bodies
-                self.write_chunk(chunk)?;
+                self.write_chunk(&function.chunk)?;
             }
 
             Value::List(items) => {
@@ -125,7 +126,8 @@ impl Serializer {
                 }
             }
 
-            Value::Range(start, stop) => {
+            Value::Range(bounds) => {
+                let (start, stop) = **bounds;
                 self.file.write_all(&[0x08])?;
                 self.file.write_all(&start.to_le_bytes())?;
                 self.file.write_all(&stop.to_le_bytes())?;
@@ -140,7 +142,7 @@ impl Serializer {
                 self.file.write_all(&len.to_be_bytes())?;
 
                 for (k, v) in borrowed.iter() {
-                    self.write_value(&Value::Str(k.clone()))?;
+                    self.write_value(&Value::Str(Rc::new(k.to_string())))?;
                     self.write_value(v)?;
                 }
             }

@@ -88,13 +88,13 @@ impl Chunk {
     pub fn add_constant(&mut self, value: Value) -> usize {
         match &value {
             Value::Str(s) => {
-                if let Some(&idx) = self.strings.get(s) {
+                if let Some(&idx) = self.strings.get(s.as_str()) {
                     return idx;
                 }
 
                 let idx = self.constants.len();
 
-                self.strings.insert(s.clone(), idx);
+                self.strings.insert(s.to_string(), idx);
                 self.constants.push(value);
 
                 idx
@@ -244,19 +244,19 @@ impl Chunk {
         }
 
         for (i, constant) in self.constants.iter().enumerate() {
-            if let Value::Function(_, _, chunk) = constant {
+            if let Value::Function(function) = constant {
                 writeln!(&mut s, "").unwrap();
                 
-                let func_name = if i + 1 < self.constants.len() {
+                let function_name = if i + 1 < self.constants.len() {
                     match &self.constants[i + 1] {
-                        Value::Str(name) => name.clone(),
+                        Value::Str(name) => name.to_string(),
                         _ => format!("<fn {}>", i)
                     }
                 } else {
                     format!("<fn {}>", i)
                 };
 
-                let inner_output = chunk.disassemble(&func_name);
+                let inner_output = function.chunk.disassemble(&function_name);
                 s.push_str(&inner_output);
             }
         }

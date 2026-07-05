@@ -65,10 +65,10 @@ pub fn vypr_float(args: &[Value]) -> Result<Value, VyprError> {
 
 pub fn vypr_str(args: &[Value]) -> Result<Value, VyprError> {
     if args.is_empty() {
-        return Ok(Value::Str(String::new())); 
+        return Ok(Value::Str(Rc::new(String::new()))); 
     }
 
-    Ok(Value::Str(args[0].to_string()))
+    Ok(Value::Str(Rc::new(args[0].to_string())))
 }
 
 pub fn vypr_len(args: &[Value]) -> Result<Value, VyprError> {
@@ -79,7 +79,8 @@ pub fn vypr_len(args: &[Value]) -> Result<Value, VyprError> {
     match &args[0] {
         Value::List(items) => Ok(Value::Int(items.borrow().len() as i64)),
         Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
-        Value::Range(start, stop) => {
+        Value::Range(bounds) => {
+            let (start, stop) = **bounds;
             let len = if stop > start { stop - start } else { 0 };
             Ok(Value::Int(len))
         },
@@ -117,7 +118,7 @@ if args.len() == 1 {
         }
     }
 
-    Ok(Value::Range(start, stop))
+    Ok(Value::Range(Box::new((start, stop))))
 }
 
 pub fn vypr_list(args: &[Value]) -> Result<Value, VyprError> {
@@ -135,15 +136,16 @@ pub fn vypr_list(args: &[Value]) -> Result<Value, VyprError> {
         Value::Str(s) => {
             let mut chars = Vec::new();
             for c in s.chars() {
-                chars.push(Value::Str(c.to_string()));
+                chars.push(Value::Str(Rc::new(c.to_string())));
             }
 
             Ok(Value::List(Rc::new(RefCell::new(chars))))
         }
 
-        Value::Range(start, stop) => {
+        Value::Range(bounds) => {
+            let (start, stop) = **bounds;
             let mut items = Vec::new();
-            for i in *start..*stop {
+            for i in start..stop {
                 items.push(Value::Int(i));
             }
 
@@ -167,11 +169,16 @@ pub fn vypr_reversed(args: &[Value]) -> Result<Value, VyprError> {
         }
 
         Value::Str(s) => {
-            let chars: Vec<Value> = s.chars().rev().map(|c| Value::Str(c.to_string())).collect();
+            let chars: Vec<Value> = s.chars()
+                .rev()
+                .map(|c| Value::Str(Rc::new(c.to_string())))
+                .collect();
+
             Ok(Value::List(Rc::new(RefCell::new(chars))))
         }
 
-        Value::Range(start, stop) => {
+        Value::Range(bounds) => {
+            let (start, stop) = **bounds;
             let mut items = Vec::new();
             let len = if stop > start { stop - start } else { 0 };
             

@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::bytecode::{Chunk, OpCode};
-use crate::value::{DataType, Value};
+use crate::value::{DataType, Value, VyprFunction};
 
 use error::error::{Span, VyprError};
 use lexer::token::TokenType;
@@ -37,16 +38,21 @@ impl Compiler {
             let func_compiler = Compiler::new();
             let func_chunk = func_compiler.compile_function(func)?;
 
-            let func_val = Value::Function(func.arity, func.locals.len(), Box::new(func_chunk));
+            let func_val = Value::Function(Rc::new(VyprFunction { 
+                arity: func.arity, 
+                upvalues: func.locals.len(), 
+                chunk: func_chunk 
+            }));
+
             let func_val_idx = script_chunk.add_constant(func_val);
-            let name_idx = script_chunk.add_constant(Value::Str(func.name.clone()));
+            let name_idx = script_chunk.add_constant(Value::Str(Rc::new(func.name.clone())));
 
             script_chunk.write(OpCode::Constant(func_val_idx), Span::default());
             script_chunk.write(OpCode::DefineGlobal(name_idx, DataType::Function), Span::default());
         }
 
         // Call <script> to kick off execution
-        let script_name_idx = script_chunk.add_constant(Value::Str("<script>".to_string()));
+        let script_name_idx = script_chunk.add_constant(Value::Str(Rc::new("<script>".to_string())));
         script_chunk.write(OpCode::GetGlobal(script_name_idx), Span::default());
         script_chunk.write(OpCode::Call(0), Span::default());
 
@@ -123,7 +129,7 @@ impl Compiler {
                                 }
                             }
                             ProjectionElem::Property(name) => {
-                                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
                                 if is_last {
                                     // Requires OpCode::SetProperty to be added to VM!
                                     self.chunk.write(OpCode::SetProperty(name_idx), span);
@@ -139,14 +145,14 @@ impl Compiler {
 
             StatementKind::DefineGlobal(name, ty, rval) => {
                 self.compile_rvalue(rval, span)?;
-                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
                 let dtype = self.type_expr_to_datatype(ty);
                 self.chunk.write(OpCode::DefineGlobal(name_idx, dtype), span);
             }
 
             StatementKind::AssignGlobal(name, rval) => {
                 self.compile_rvalue(rval, span)?;
-                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
                 self.chunk.write(OpCode::SetGlobal(name_idx), span);
             }
         }
@@ -212,7 +218,7 @@ impl Compiler {
             }
 
             Rvalue::Import(module) => {
-                let name_idx = self.chunk.add_constant(Value::Str(module.clone()));
+                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(module.clone())));
                 self.chunk.write(OpCode::Import(name_idx), span);
             }
 
@@ -220,7 +226,12 @@ impl Compiler {
                 let compiler = Compiler::new();
                 let chunk = compiler.compile_function(function)?;
 
-                let val = Value::Function(function.arity, function.locals.len(), Box::new(chunk));
+                let val = Value::Function(Rc::new(VyprFunction {
+                    arity: function.arity,
+                    upvalues: function.locals.len(),
+                    chunk,
+                }));
+
                 let idx = self.chunk.add_constant(val);
 
                 self.chunk.write(OpCode::Constant(idx), span)
@@ -261,7 +272,7 @@ impl Compiler {
                             self.chunk.write(OpCode::GetSubscript, span);
                         }
                         ProjectionElem::Property(name) => {
-                            let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                            let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
                             self.chunk.write(OpCode::GetProperty(name_idx), span);
                         }
                     }
@@ -271,7 +282,7 @@ impl Compiler {
                 let val = match c {
                     vir::context::Constant::Int(i) => Value::Int(*i),
                     vir::context::Constant::Float(f) => Value::Float(*f),
-                    vir::context::Constant::String(s) => Value::Str(s.clone()),
+                    vir::context::Constant::String(s) => Value::Str(Rc::new(s.clone())),
                     vir::context::Constant::Bool(b) => Value::Bool(*b),
                     vir::context::Constant::None => Value::None,
                 };
@@ -279,7 +290,7 @@ impl Compiler {
                 self.chunk.write(OpCode::Constant(idx), span);
             }
             Operand::Static(name) => {
-                let name_idx = self.chunk.add_constant(Value::Str(name.clone()));
+                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
                 self.chunk.write(OpCode::GetGlobal(name_idx), span);
             }
         }
@@ -319,7 +330,7 @@ impl Compiler {
                     self.compile_operand(arg, span)?;
                 }
                 
-                let name_idx = self.chunk.add_constant(Value::Str(method_name.clone()));
+                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(method_name.clone())));
                 self.chunk.write(OpCode::Invoke(name_idx, args.len()), span);
                 self.chunk.write(OpCode::SetLocal(destination.local.0), span);
 

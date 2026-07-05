@@ -10,15 +10,15 @@ use std::process;
 pub fn create_module() -> Value {
     let mut exports = HashMap::new();
 
-    exports.insert("getenv".to_string(), Value::Native(NativeFunction {
+    exports.insert("getenv".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "getenv".to_string(),
         function: os_getenv,
-    }));
+    })));
 
-    exports.insert("exit".to_string(), Value::Native(NativeFunction {
+    exports.insert("exit".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "exit".to_string(),
         function: os_exit,
-    }));
+    })));
 
     Value::Module(Rc::new(Module {
         name: "os".to_string(),
@@ -32,8 +32,8 @@ fn os_getenv(args: &[Value]) -> Result<Value, VyprError> {
     }
 
     if let Value::Str(key) = &args[0] {
-        match env::var(key) {
-            Ok(val) => Ok(Value::Str(val)),
+        match env::var(key.as_str()) {
+            Ok(val) => Ok(Value::Str(Rc::new(val))),
             Err(_) => Ok(Value::None),
         }
     } else {

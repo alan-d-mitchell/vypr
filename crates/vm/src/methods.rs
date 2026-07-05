@@ -137,7 +137,7 @@ impl VM {
         }
     }
 
-    fn invoke_string_method(&mut self, s: String, method: &str, args: &[Value]) -> Result<(), VyprError> {
+    fn invoke_string_method(&mut self, s: Rc<String>, method: &str, args: &[Value]) -> Result<(), VyprError> {
         match method {
             "startswith" | "endswith" => {
                 if args.len() != 1 {
@@ -150,7 +150,7 @@ impl VM {
                     _ => return Err(self.error("R002", format!("{}() arg must be a string", method))),
                 };
 
-                let result = if method == "startswith" { s.starts_with(prefix) } else { s.ends_with(prefix) };
+                let result = if method == "startswith" { s.starts_with(prefix.as_str()) } else { s.ends_with(prefix.as_str()) };
 
                 self.push(Value::Bool(result));
                 Ok(())
@@ -170,7 +170,7 @@ impl VM {
                     return Err(self.error("R006", "isupper() takes no arguments").with_help("remove the arguments"));
                 }
 
-                let is_upper = !s.is_empty() && s == s.to_uppercase() && s != s.to_lowercase();
+                let is_upper = !s.is_empty() && *s == s.to_uppercase() && *s != s.to_lowercase();
                 self.push(Value::Bool(is_upper));
 
                 Ok(())
@@ -181,7 +181,7 @@ impl VM {
                     return Err(self.error("R006", "islower() takes no arguments").with_help("remove the arguments"));
                 }
 
-                let is_lower = !s.is_empty() && s == s.to_lowercase() && s != s.to_uppercase();
+                let is_lower = !s.is_empty() && *s == s.to_lowercase() && *s != s.to_uppercase();
                 self.push(Value::Bool(is_lower));
 
                 Ok(())
@@ -211,8 +211,9 @@ impl VM {
                         string.join(&s)
                     },
 
-                    Value::Range(start, stop) => {
-                        let string_elements: Vec<String> = (*start..*stop).map(|v| v.to_string()).collect();
+                    Value::Range(bounds) => {
+                        let (start, stop) = **bounds;
+                        let string_elements: Vec<String> = (start..stop).map(|v| v.to_string()).collect();
                         string_elements.join(&s)
                     },
 
@@ -223,7 +224,7 @@ impl VM {
                     _ => return Err(self.error("R002", "join() expects an iterable")),
                 };
 
-                self.push(Value::Str(joined));
+                self.push(Value::Str(Rc::new(joined)));
                 Ok(())
             }
 
@@ -250,15 +251,15 @@ impl VM {
                     };
 
                     if count < 0 {
-                        s.replace(old_val, new_val)
+                        s.replace(old_val.as_str(), new_val.as_str())
                     } else {
-                        s.replacen(old_val, new_val, count as usize)
+                        s.replacen(old_val.as_str(), new_val.as_str(), count as usize)
                     }
                 } else {
-                    s.replace(old_val, new_val)
+                    s.replace(old_val.as_str(), new_val.as_str())
                 };
 
-                self.push(Value::Str(replaced_string));
+                self.push(Value::Str(Rc::new(replaced_string)));
                 Ok(())
             }
 
@@ -276,7 +277,7 @@ impl VM {
                     }
                 };
 
-                self.push(Value::Str(stripped));
+                self.push(Value::Str(Rc::new(stripped)));
                 Ok(())
             }
 
@@ -300,16 +301,16 @@ impl VM {
                         };
 
                         if maxsplit < 0 {
-                            s.split(separator).map(String::from).collect()
+                            s.split(separator.as_str()).map(String::from).collect()
                         } else {
-                            s.splitn((maxsplit + 1) as usize, separator).map(String::from).collect()
+                            s.splitn((maxsplit + 1) as usize, separator.as_str()).map(String::from).collect()
                         }
                     } else {
-                        s.split(separator).map(String::from).collect()
+                        s.split(separator.as_str()).map(String::from).collect()
                     }
                 };
 
-                let list_elements: Vec<Value> = string_parts.into_iter().map(Value::Str).collect();
+                let list_elements: Vec<Value> = string_parts.into_iter().map(|p| Value::Str(Rc::new(p))).collect();
                 self.push(Value::List(Rc::new(RefCell::new(list_elements))));
 
                 Ok(())
@@ -320,7 +321,7 @@ impl VM {
                     return Err(self.error("R006", "lower() takes no arguments"));
                 }
 
-                self.push(Value::Str(s.to_lowercase()));
+                self.push(Value::Str(Rc::new(s.to_lowercase())));
                 Ok(())
             }
 
@@ -329,7 +330,7 @@ impl VM {
                     return Err(self.error("R006", "upper() takes no arguments"));
                 }
 
-                self.push(Value::Str(s.to_uppercase()));
+                self.push(Value::Str(Rc::new(s.to_uppercase())));
                 Ok(())
             }
 

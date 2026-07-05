@@ -73,18 +73,25 @@ impl PartialEq for Module {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct VyprFunction {
+    pub arity: usize,
+    pub upvalues: usize,
+    pub chunk: Chunk
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    Str(String),
+    None,
+    Str(Rc<String>),
     List(Rc<RefCell<Vec<Value>>>),
     Dict(Rc<RefCell<HashMap<String, Value>>>),
-    Range(i64, i64),
-    None,
-    Native(NativeFunction),
-    Function(usize, usize, Box<Chunk>),
-    UnloadedModule(String),
+    Range(Box<(i64, i64)>),
+    Native(Rc<NativeFunction>),
+    Function(Rc<VyprFunction>),
+    UnloadedModule(Rc<String>),
     Module(Rc<Module>),
 }
 
@@ -99,8 +106,8 @@ impl Value {
             Value::List(_) => DataType::List,
             Value::Dict(_) => DataType::Dict,
             Value::None => DataType::None,
-            Value::Native(_) | Value::Function(_, _, _) => DataType::Function,
-            Value::Range(_, _) => DataType::Range,
+            Value::Native(_) | Value::Function(_) => DataType::Function,
+            Value::Range(_) => DataType::Range,
             Value::UnloadedModule(_) | Value::Module(_) => DataType::Module,
         }
     }
@@ -112,7 +119,10 @@ impl Value {
             Value::Int(i) => *i != 0,
             Value::Float(f) => *f != 0.0,
             Value::Str(s) => !s.is_empty(),
-            Value::Range(start, stop) => start < stop,
+            Value::Range(bounds) => {
+                let (start, stop) = **bounds;
+                start < stop
+            },
             _ => true,
         }
     }
@@ -165,10 +175,13 @@ impl fmt::Display for Value {
             Value::Str(v) => write!(f, "{}", v),
             Value::List(_) => write!(f, "{}", self.repr_inner(0)),
             Value::Dict(_) => write!(f, "{}", self.repr_inner(0)),
-            Value::Range(start, stop) => write!(f, "range({}, {})", start, stop),
+            Value::Range(bounds) => {
+                let (start, stop) = **bounds;
+                write!(f, "range({}, {})", start, stop)
+            }
             Value::None => write!(f, "None"),
             Value::Native(function) => write!(f, "<built-in function {}>", function.name),
-            Value::Function(_, _, _) => write!(f, "<fn>"),
+            Value::Function(_) => write!(f, "<fn>"),
             
             Value::Module(m) => write!(f, "<module {}>", m.name),
             Value::UnloadedModule(name) => write!(f, "<unloaded module {}>", name),

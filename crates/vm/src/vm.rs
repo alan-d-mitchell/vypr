@@ -1,7 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use error::error::{Span, VyprError};
-
-use crate::{builtins, bytecode::{Chunk, OpCode}, value::{self, DataType, Value}};
+use crate::{builtins, bytecode::{Chunk, OpCode}, value::{self, DataType, Value, NativeFunction}};
 
 #[derive(Clone)]
 struct GlobalVar {
@@ -27,66 +26,66 @@ impl VM {
         let mut globals = HashMap::new();
 
         globals.insert("print".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "print".to_string(),
                 function: builtins::vypr_print
-            }),
+            })),
             lock: DataType::Function,
         });
 
         globals.insert("int".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "int".to_string(),
                 function: builtins::vypr_int
-            }),
+            })),
             lock: DataType::Function
         });
 
         globals.insert("float".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "float".to_string(),
                 function: builtins::vypr_float
-            }),
+            })),
             lock: DataType::Function
         });
 
         globals.insert("str".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "str".to_string(),
                 function: builtins::vypr_str
-            }),
+            })),
             lock: DataType::Function
         });
 
         globals.insert("len".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "len".to_string(),
                 function: builtins::vypr_len
-            }),
+            })),
             lock: DataType::Function
         });
 
         globals.insert("range".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "range".to_string(),
                 function: builtins::vypr_range
-            }),
+            })),
             lock: DataType::Function
         });
 
         globals.insert("list".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "list".to_string(),
                 function: builtins::vypr_list
-            }),
+            })),
             lock: DataType::Function
         });
 
         globals.insert("reversed".to_string(), GlobalVar {
-            value: Value::Native(value::NativeFunction {
+            value: Value::Native(Rc::new(NativeFunction {
                 name: "reversed".to_string(),
                 function: builtins::vypr_reversed
-            }),
+            })),
             lock: DataType::Function
         });
 
@@ -115,15 +114,13 @@ impl VM {
         VyprError::new(code, message, span)
     }
 
-    pub fn run(&mut self) -> Result<(), VyprError> {
+pub fn run(&mut self) -> Result<(), VyprError> {
         loop {
-            // Check if we have finished the top frame
             if self.current_frame().ip >= self.current_frame().chunk.code.len() {
-                // Implicit return at end of chunk
                 if self.frames.len() == 1 {
-                    return Ok(()); // Script done
+                    return Ok(()); 
                 } else {
-                    self.frames.pop(); // Return from function
+                    self.frames.pop(); 
                     continue;
                 }
             }
@@ -180,7 +177,7 @@ impl VM {
 
                     if let Some(global) = self.globals.get(&name) {
                         if let Value::UnloadedModule(mod_name) = &global.value {
-                            module_to_load = Some(mod_name.clone());
+                            module_to_load = Some(mod_name.to_string());
                         }
                     } else {
                         return Err(self.error("R001", format!("undefined variable '{}'", name)));
@@ -233,8 +230,8 @@ impl VM {
 
                 OpCode::SetLocal(slot) => {
                     let index = self.current_frame().frame_start + slot;
-                    let val = self.pop()?; // Get new value
-                    self.stack[index] = val; // Update stack in-place
+                    let val = self.pop()?; 
+                    self.stack[index] = val; 
                 }
 
                 OpCode::Call(arg_count) => {
@@ -244,7 +241,6 @@ impl VM {
                 OpCode::Invoke(name_idx, arg_count) => {
                     let method_name = self.read_string(name_idx)?;
 
-                    // Peek down the stack to find the object we are calling the method on
                     let obj_idx = self.stack.len() - 1 - arg_count; 
                     let obj = self.stack[obj_idx].clone();
 
@@ -257,7 +253,7 @@ impl VM {
                                 }
                                 args.reverse();
 
-                                self.pop()?; // Pop the module object off the stack
+                                self.pop()?; 
 
                                 let result = (native.function)(&args)?;
                                 self.push(result);
@@ -317,13 +313,14 @@ impl VM {
                             }
 
                             if let Some(c) = s.chars().nth(effective_index as usize) {
-                                self.push(Value::Str(c.to_string()));
+                                self.push(Value::Str(Rc::new(c.to_string())));
                             } else {
                                 return Err(self.error("R003", "string index out of range"));
                             }
                         }
 
-                        Value::Range(start, stop) => {
+                        Value::Range(bounds) => {
+                            let (start, stop) = *bounds;
                             let index = match index_val {
                                 Value::Int(i) => i,
                                 _ => return Err(self.error("R002", "range index must be an integer"))
@@ -340,7 +337,7 @@ impl VM {
 
                         Value::Dict(dict) => {
                             let key_str = match index_val {
-                                Value::Str(s) => s,
+                                Value::Str(s) => s.to_string(),
                                 _ => index_val.to_string(),
                             };
                             
@@ -382,7 +379,7 @@ impl VM {
                         
                         Value::Dict(dict) => {
                             let key_str = match index_val {
-                                Value::Str(s) => s,
+                                Value::Str(s) => s.to_string(),
                                 _ => index_val.to_string(),
                             };
                             dict.borrow_mut().insert(key_str, value);
@@ -429,15 +426,10 @@ impl VM {
 
                 OpCode::BuildList(count) => {
                     let mut items = Vec::with_capacity(count);
-                    
-                    // Pop items from stack (they are in reverse order)
                     for _ in 0..count {
                         items.push(self.pop()?);
                     }
-                    
-                    // Restore original order
                     items.reverse();
-                    
                     self.push(Value::List(Rc::new(RefCell::new(items))));
                 }
 
@@ -449,7 +441,7 @@ impl VM {
                         let key = self.pop()?;
 
                         let key_str = match key {
-                            Value::Str(s) => s,
+                            Value::Str(s) => s.to_string(),
                             _ => key.to_string(), 
                         };
 
@@ -466,7 +458,8 @@ impl VM {
                         Value::Dict(dict) => self.push(Value::Int(dict.borrow().len() as i64)),
                         Value::Str(s) => self.push(Value::Int(s.chars().count() as i64)),
 
-                        Value::Range(start, stop) => {
+                        Value::Range(bounds) => {
+                            let (start, stop) = *bounds;
                             let len = if stop > start { stop - start } else { 0 };
                             self.push(Value::Int(len));
                         }
@@ -494,7 +487,6 @@ impl VM {
                 }
 
                 OpCode::JumpIfFalse(offset) => {
-                    // Peek at the top (do not pop yet, needed for and/or)
                     let val = self.stack.last().expect("stack underflow in jump");
                     if !val.is_truthy() {
                         self.current_frame_mut().ip += offset;
@@ -516,7 +508,7 @@ impl VM {
                         (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 + b)),
                         (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a + b as f64)),
 
-                        (Value::Str(a), Value::Str(b)) => self.push(Value::Str(a + &b)),
+                        (Value::Str(a), Value::Str(b)) => self.push(Value::Str(Rc::new(format!("{}{}", a, b)))),
 
                         _ => return Err(self.error("R002", "invalid operands for +")),
                     }
@@ -562,7 +554,7 @@ impl VM {
                                 return Err(self.error("R007", "division by zero"));
                             }
 
-                            self.push(Value::Float(a as f64 / b as f64)) // Integer division
+                            self.push(Value::Float(a as f64 / b as f64)) 
                         }
                         (Value::Float(a), Value::Float(b)) => {
                             self.push(Value::Float(a / b))
@@ -583,7 +575,6 @@ impl VM {
                             if b == 0 {
                                 return Err(self.error("R007", "modulo by zero"));
                             }
-
                             self.push(Value::Int(a % b))
                         }
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a % b)),
@@ -604,7 +595,6 @@ impl VM {
                             if b == 0 {
                                 return Err(self.error("R007", "division by zero"));
                             }
-
                             self.push(Value::Int(a / b))
                         }
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Float((a / b).floor())),
@@ -617,8 +607,8 @@ impl VM {
                 }
 
                 OpCode::Power => {
-                    let b = self.pop()?; // exponent
-                    let a = self.pop()?; // base
+                    let b = self.pop()?;
+                    let a = self.pop()?;
                     
                     match (a, b) {
                         (Value::Int(base), Value::Int(exp)) => {
@@ -654,7 +644,6 @@ impl VM {
                 OpCode::Equal => {
                     let b = self.pop()?;
                     let a = self.pop()?;
-
                     self.push(Value::Bool(a == b));
                 }
 
@@ -696,7 +685,6 @@ impl VM {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a <= b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a <= b)),
 
-                        // Int/Float mixing
                         (Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) <= b)),
                         (Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a <= (b as f64))),
                         _ => return Err(self.error("R002", "invalid types for <=")),
@@ -711,7 +699,6 @@ impl VM {
                         (Value::Int(a), Value::Int(b)) => self.push(Value::Bool(a >= b)),
                         (Value::Float(a), Value::Float(b)) => self.push(Value::Bool(a >= b)),
 
-                        // Int/Float mixing
                         (Value::Int(a), Value::Float(b)) => self.push(Value::Bool((a as f64) >= b)),
                         (Value::Float(a), Value::Int(b)) => self.push(Value::Bool(a >= (b as f64))),
                         _ => return Err(self.error("R002", "invalid types for >=")),
@@ -765,7 +752,6 @@ impl VM {
                     for _ in 0..count {
                         parts.push(self.pop()?);
                     }
-
                     parts.reverse();
 
                     let mut formatted = String::new();
@@ -775,13 +761,13 @@ impl VM {
                             Value::Int(i) => formatted.push_str(&i.to_string()),
                             Value::Float(f) => formatted.push_str(&f.to_string()),
                             Value::Bool(b) => formatted.push_str(if b { "true" } else { "false" }),
-                            Value::List(_) | Value::Range(_, _) => formatted.push_str(&part.to_string()),
+                            Value::List(_) | Value::Range(_) => formatted.push_str(&part.to_string()),
                             Value::None => formatted.push_str("None"),
                             _ => return Err(self.error("R002", "cannot format this type"))
                         }
                     }
 
-                    self.push(Value::Str(formatted))
+                    self.push(Value::Str(Rc::new(formatted)))
                 }
 
                 OpCode::Return => {
@@ -798,8 +784,7 @@ impl VM {
 
                 OpCode::Import(idx) => {
                     let name = self.read_string(idx)?;
-
-                    self.push(Value::UnloadedModule(name));
+                    self.push(Value::UnloadedModule(Rc::new(name)));
                 }
             }
         }
@@ -841,11 +826,11 @@ impl VM {
                 Ok(())
             }
 
-            Value::Function(arity, local_count, chunk) => {
-                if arg_count != arity {
+            Value::Function(function) => {
+                if arg_count != function.arity {
                     return Err(self.error("R008", format!(
                         "function expected {} arguments but got {}", 
-                        arity, arg_count
+                        function.arity, arg_count
                     )));
                 }
 
@@ -854,22 +839,20 @@ impl VM {
                     args.push(self.pop()?);
                 }
                 args.reverse();
-                self.pop()?; // pop the function itself
+                self.pop()?;
 
                 let new_frame_start = self.stack.len();
 
-                // Pre-allocate ALL locals (_0 through _N)
-                for _ in 0..local_count {
+                for _ in 0..function.upvalues {
                     self.push(Value::None);
                 }
 
-                // Write args into their slots (_1 through _arity)
                 for (i, arg) in args.iter().enumerate() {
                     self.stack[new_frame_start + 1 + i] = arg.clone();
                 }
 
                 self.frames.push(CallFrame {
-                    chunk: *chunk,
+                    chunk: function.chunk.clone(),
                     ip: 0,
                     frame_start: new_frame_start,
                 });
@@ -887,7 +870,7 @@ impl VM {
 
     pub(crate) fn read_string(&self, idx: usize) -> Result<String, VyprError> {
         match self.read_constant(idx) {
-            Value::Str(s) => Ok(s),
+            Value::Str(s) => Ok(s.to_string()),
             _ => Err(self.error("R005", "expected string in constant pool")),
         }
     }

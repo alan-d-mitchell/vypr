@@ -10,15 +10,15 @@ use std::thread::sleep;
 pub fn create_module() -> Value {
     let mut exports = HashMap::new();
 
-    exports.insert("time".to_string(), Value::Native(NativeFunction {
+    exports.insert("time".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "time".to_string(),
         function: time_func,
-    }));
+    })));
 
-    exports.insert("sleep".to_string(), Value::Native(NativeFunction {
+    exports.insert("sleep".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "sleep".to_string(),
         function: sleep_func,
-    }));
+    })));
 
     Value::Module(Rc::new(Module {
         name: "time".to_string(),

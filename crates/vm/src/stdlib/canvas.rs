@@ -17,30 +17,30 @@ thread_local! {
 pub fn create_module() -> Value {
     let mut exports = HashMap::new();
 
-    exports.insert("init".to_string(), Value::Native(NativeFunction {
+    exports.insert("init".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "init".to_string(),
         function: canvas_init,
-    }));
+    })));
 
-    exports.insert("set_pixel".to_string(), Value::Native(NativeFunction {
+    exports.insert("set_pixel".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "set_pixel".to_string(),
         function: canvas_set_pixel,
-    }));
+    })));
 
-    exports.insert("save".to_string(), Value::Native(NativeFunction {
+    exports.insert("save".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "save".to_string(),
         function: canvas_save,
-    }));
+    })));
 
-    exports.insert("draw_rect".to_string(), Value::Native(NativeFunction {
+    exports.insert("draw_rect".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "draw_rect".to_string(),
         function: canvas_draw_rect,
-    }));
+    })));
 
-    exports.insert("draw_circle".to_string(), Value::Native(NativeFunction {
+    exports.insert("draw_circle".to_string(), Value::Native(Rc::new(NativeFunction {
         name: "draw_circle".to_string(),
         function: canvas_draw_circle,
-    }));
+    })));
 
     Value::Module(Rc::new(Module {
         name: "canvas".to_string(),
@@ -118,7 +118,7 @@ fn canvas_save(args: &[Value]) -> Result<Value, VyprError> {
                     let height = *ch.borrow();
                     let pixels = cp.borrow();
 
-                    if let Ok(file) = File::create(filename) {
+                    if let Ok(file) = File::create(filename.as_str()) {
                         let mut writer = BufWriter::new(file);
                         let _ = writeln!(writer, "P3\n{} {}\n255", width, height);
                         
