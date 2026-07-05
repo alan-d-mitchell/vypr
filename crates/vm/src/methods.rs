@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 use error::error::VyprError;
-use crate::{value::Value, vm::VM};
+use crate::{value::{Value, DataType}, vm::VM};
 
 impl VM {
 
@@ -15,9 +15,12 @@ impl VM {
 
         let obj = self.pop()?;
 
+        if let Some(s) = obj.as_str() {
+            return self.invoke_string_method(s, &method_name, &args);
+        }
+
         match obj {
             Value::List(items) => self.invoke_list_method(items, &method_name, &args),
-            Value::Str(s) => self.invoke_string_method(s, &method_name, &args),
             val => Err(self.error("R004", format!("object {:?} has no method '{}'", val.get_type(), method_name))),
         }
     }
@@ -137,7 +140,7 @@ impl VM {
         }
     }
 
-    fn invoke_string_method(&mut self, s: Rc<String>, method: &str, args: &[Value]) -> Result<(), VyprError> {
+    fn invoke_string_method(&mut self, s: &str, method: &str, args: &[Value]) -> Result<(), VyprError> {
         match method {
             "startswith" | "endswith" => {
                 if args.len() != 1 {
@@ -145,12 +148,12 @@ impl VM {
                     return Err(self.error("R006", format!("{}() takes exactly 1 argument, got {}", method, args.len())).with_help(hint));
                 }
 
-                let prefix = match &args[0] {
-                    Value::Str(p) => p,
-                    _ => return Err(self.error("R002", format!("{}() arg must be a string", method))),
+                let prefix = match args[0].as_str() {
+                    Some(p) => p,
+                    None => return Err(self.error("R002", format!("{}() arg must be a string", method))),
                 };
 
-                let result = if method == "startswith" { s.starts_with(prefix.as_str()) } else { s.ends_with(prefix.as_str()) };
+                let result = if method == "startswith" { s.starts_with(prefix) } else { s.ends_with(prefix) };
 
                 self.push(Value::Bool(result));
                 Ok(())
@@ -170,7 +173,7 @@ impl VM {
                     return Err(self.error("R006", "isupper() takes no arguments").with_help("remove the arguments"));
                 }
 
-                let is_upper = !s.is_empty() && *s == s.to_uppercase() && *s != s.to_lowercase();
+                let is_upper = !s.is_empty() && s == s.to_uppercase() && s != s.to_lowercase();
                 self.push(Value::Bool(is_upper));
 
                 Ok(())
@@ -181,7 +184,7 @@ impl VM {
                     return Err(self.error("R006", "islower() takes no arguments").with_help("remove the arguments"));
                 }
 
-                let is_lower = !s.is_empty() && *s == s.to_lowercase() && *s != s.to_uppercase();
+                let is_lower = !s.is_empty() && s == s.to_lowercase() && s != s.to_uppercase();
                 self.push(Value::Bool(is_lower));
 
                 Ok(())
@@ -208,23 +211,23 @@ impl VM {
                     Value::List(items) => {
                         let borrowed = items.borrow();
                         let string: Vec<String> = borrowed.iter().map(|v| v.to_string()).collect();
-                        string.join(&s)
+                        string.join(s)
                     },
 
                     Value::Range(bounds) => {
                         let (start, stop) = **bounds;
                         let string_elements: Vec<String> = (start..stop).map(|v| v.to_string()).collect();
-                        string_elements.join(&s)
+                        string_elements.join(s)
                     },
-
-                    Value::Str(str_val) => {
-                        let string_elements: Vec<String> = str_val.chars().map(|c| c.to_string()).collect();
-                        string_elements.join(&s)
+                    
+                    val if val.get_type() == DataType::Str => {
+                        let string_elements: Vec<String> = val.as_str().unwrap().chars().map(|c| c.to_string()).collect();
+                        string_elements.join(s)
                     },
                     _ => return Err(self.error("R002", "join() expects an iterable")),
                 };
 
-                self.push(Value::Str(Rc::new(joined)));
+                self.push(Value::make_string(&joined));
                 Ok(())
             }
 
@@ -234,13 +237,13 @@ impl VM {
                     return Err(self.error("R006", format!("replace() takes 2 or 3 arguments, got {}", args.len())).with_help(hint));
                 }
 
-                let old_val = match &args[0] {
-                    Value::Str(str_val) => str_val,
+                let old_val = match args[0].as_str() {
+                    Some(str_val) => str_val,
                     _ => return Err(self.error("R002", "replace() 'old' argument must be a string")),
                 };
 
-                let new_val = match &args[1] {
-                    Value::Str(str_val) => str_val,
+                let new_val = match args[1].as_str() {
+                    Some(str_val) => str_val,
                     _ => return Err(self.error("R002", "replace() 'new' argument must be a string")),
                 };
 
@@ -251,15 +254,15 @@ impl VM {
                     };
 
                     if count < 0 {
-                        s.replace(old_val.as_str(), new_val.as_str())
+                        s.replace(old_val, new_val)
                     } else {
-                        s.replacen(old_val.as_str(), new_val.as_str(), count as usize)
+                        s.replacen(old_val, new_val, count as usize)
                     }
                 } else {
-                    s.replace(old_val.as_str(), new_val.as_str())
+                    s.replace(old_val, new_val)
                 };
 
-                self.push(Value::Str(Rc::new(replaced_string)));
+                self.push(Value::make_string(&replaced_string));
                 Ok(())
             }
 
@@ -271,13 +274,13 @@ impl VM {
                 let stripped = if args.is_empty() {
                     s.trim().to_string()
                 } else {
-                    match &args[0] {
-                        Value::Str(chars_to_remove) => s.trim_matches(|c| chars_to_remove.contains(c)).to_string(),
+                    match args[0].as_str() {
+                        Some(chars_to_remove) => s.trim_matches(|c| chars_to_remove.contains(c)).to_string(),
                         _ => return Err(self.error("R002", "strip() argument must be a string")),
                     }
                 };
 
-                self.push(Value::Str(Rc::new(stripped)));
+                self.push(Value::make_string(&stripped));
                 Ok(())
             }
 
@@ -289,8 +292,8 @@ impl VM {
                 let string_parts: Vec<String> = if args.is_empty() {
                     s.split_whitespace().map(String::from).collect()
                 } else {
-                    let separator = match &args[0] {
-                        Value::Str(sep) => sep,
+                    let separator = match args[0].as_str() {
+                        Some(sep) => sep,
                         _ => return Err(self.error("R002", "split() separator must be a string")),
                     };
 
@@ -301,16 +304,16 @@ impl VM {
                         };
 
                         if maxsplit < 0 {
-                            s.split(separator.as_str()).map(String::from).collect()
+                            s.split(separator).map(String::from).collect()
                         } else {
-                            s.splitn((maxsplit + 1) as usize, separator.as_str()).map(String::from).collect()
+                            s.splitn((maxsplit + 1) as usize, separator).map(String::from).collect()
                         }
                     } else {
-                        s.split(separator.as_str()).map(String::from).collect()
+                        s.split(separator).map(String::from).collect()
                     }
                 };
 
-                let list_elements: Vec<Value> = string_parts.into_iter().map(|p| Value::Str(Rc::new(p))).collect();
+                let list_elements: Vec<Value> = string_parts.into_iter().map(|p| Value::make_string(&p)).collect();
                 self.push(Value::List(Rc::new(RefCell::new(list_elements))));
 
                 Ok(())
@@ -321,7 +324,7 @@ impl VM {
                     return Err(self.error("R006", "lower() takes no arguments"));
                 }
 
-                self.push(Value::Str(Rc::new(s.to_lowercase())));
+                self.push(Value::make_string(&s.to_lowercase()));
                 Ok(())
             }
 
@@ -330,7 +333,7 @@ impl VM {
                     return Err(self.error("R006", "upper() takes no arguments"));
                 }
 
-                self.push(Value::Str(Rc::new(s.to_uppercase())));
+                self.push(Value::make_string(&s.to_uppercase()));
                 Ok(())
             }
 

@@ -33,8 +33,8 @@ pub enum OpCode {
 
     GetSubscript,
     SetSubscript,
-    GetProperty(usize),  // object.name
-    SetProperty(usize),  // object.name = value
+    GetProperty(usize),  
+    SetProperty(usize),  
 
     BuildList(usize),
     ListAppend,
@@ -86,30 +86,27 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
-        match &value {
-            Value::Str(s) => {
-                if let Some(&idx) = self.strings.get(s.as_str()) {
-                    return idx;
-                }
-
-                let idx = self.constants.len();
-
-                self.strings.insert(s.to_string(), idx);
-                self.constants.push(value);
-
-                idx
+        // Fast path for both Stack and Heap strings!
+        if let Some(s) = value.as_str() {
+            if let Some(&idx) = self.strings.get(s) {
+                return idx;
             }
 
+            let idx = self.constants.len();
+            self.strings.insert(s.to_string(), idx);
+            self.constants.push(value);
+            return idx;
+        }
+
+        match &value {
             Value::Int(i) => {
                 if let Some(&idx) = self.ints.get(i) {
                     return idx;
                 }
 
                 let idx = self.constants.len();
-
                 self.ints.insert(*i, idx);
                 self.constants.push(value);
-
                 idx
             }
 
@@ -121,10 +118,8 @@ impl Chunk {
                 }
 
                 let idx = self.constants.len();
-
                 self.floats.insert(bits, idx);
                 self.constants.push(value);
-
                 idx
             }
 
@@ -135,16 +130,13 @@ impl Chunk {
 
                     self.true_idx = Some(idx);
                     self.constants.push(value);
-
                     idx
                 } else {
                     if let Some(idx) = self.false_idx { return idx; }
 
                     let idx = self.constants.len();
-
                     self.false_idx = Some(idx);
                     self.constants.push(value);
-
                     idx
                 }
             }
@@ -155,7 +147,6 @@ impl Chunk {
 
                 self.none_idx = Some(idx);
                 self.constants.push(value);
-
                 idx
             }
 
@@ -248,9 +239,10 @@ impl Chunk {
                 writeln!(&mut s, "").unwrap();
                 
                 let function_name = if i + 1 < self.constants.len() {
-                    match &self.constants[i + 1] {
-                        Value::Str(name) => name.to_string(),
-                        _ => format!("<fn {}>", i)
+                    if let Some(name) = self.constants[i + 1].as_str() {
+                        name.to_string()
+                    } else {
+                        format!("<fn {}>", i)
                     }
                 } else {
                     format!("<fn {}>", i)

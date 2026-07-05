@@ -1,5 +1,4 @@
 use std::fs::File;
-use std::rc::Rc;
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::bytecode::{Chunk, OpCode};
@@ -100,23 +99,27 @@ impl Serializer {
                 self.file.write_all(s.as_bytes())?;
             }
 
+            Value::InlineStr(len, buf) => {
+                self.file.write_all(&[0x04])?;
+                self.file.write_all(&(*len as u32).to_be_bytes())?;
+                self.file.write_all(&buf[..(*len as usize)])?;
+            }
+
             Value::None => {
                 self.file.write_all(&[0x05])?;
             }
 
             Value::Native(_) => {
-                // Cannot serialize native functions
-                self.file.write_all(&[0x05])?; // Write None placeholder
+                self.file.write_all(&[0x05])?; 
             }
 
             Value::Function(function) => {
                 self.file.write_all(&[0x06])?;
-                // Recursive serialization for function bodies
                 self.write_chunk(&function.chunk)?;
             }
 
             Value::List(items) => {
-                self.file.write_all(&[0x07])?; // tag
+                self.file.write_all(&[0x07])?; 
                 let borrowed = items.borrow();
                 let len = borrowed.len() as u32;
                 self.file.write_all(&len.to_be_bytes())?;
@@ -142,7 +145,7 @@ impl Serializer {
                 self.file.write_all(&len.to_be_bytes())?;
 
                 for (k, v) in borrowed.iter() {
-                    self.write_value(&Value::Str(Rc::new(k.to_string())))?;
+                    self.write_value(&Value::make_string(k))?;
                     self.write_value(v)?;
                 }
             }
@@ -161,14 +164,11 @@ impl Serializer {
                 buf.push(0x01);
                 buf.extend_from_slice(&(*idx as u32).to_be_bytes());
             }
-            
-            // serialize the data type lock
             OpCode::DefineGlobal(idx, dtype) => {
                 buf.push(0x02);
                 buf.extend_from_slice(&(*idx as u32).to_be_bytes());
-                self.write_datatype(buf, dtype); // <--- HERE
+                self.write_datatype(buf, dtype);
             }
-            
             OpCode::GetGlobal(idx) => {
                 buf.push(0x03);
                 buf.extend_from_slice(&(*idx as u32).to_be_bytes());

@@ -110,7 +110,7 @@ fn canvas_save(args: &[Value]) -> Result<Value, VyprError> {
         return Err(error("R014", format!("save() takes exactly 1 argument, got {}", args.len())));
     }
 
-    if let Value::Str(filename) = &args[0] {
+    if let Some(filename) = args[0].as_str() {
         CANVAS_WIDTH.with(|cw| {
             CANVAS_HEIGHT.with(|ch| {
                 CANVAS_PIXELS.with(|cp| {
@@ -118,7 +118,7 @@ fn canvas_save(args: &[Value]) -> Result<Value, VyprError> {
                     let height = *ch.borrow();
                     let pixels = cp.borrow();
 
-                    if let Ok(file) = File::create(filename.as_str()) {
+                    if let Ok(file) = File::create(filename) {
                         let mut writer = BufWriter::new(file);
                         let _ = writeln!(writer, "P3\n{} {}\n255", width, height);
                         
@@ -201,7 +201,6 @@ fn canvas_draw_circle(args: &[Value]) -> Result<Value, VyprError> {
                 CANVAS_PIXELS.with(|cp| {
                     let mut pixels = cp.borrow_mut();
                     
-                    // Bounding box optimization
                     let min_y = (cy - rad).max(0);
                     let max_y = (cy + rad).min(height - 1);
                     let min_x = (cx - rad).max(0);
@@ -212,7 +211,6 @@ fn canvas_draw_circle(args: &[Value]) -> Result<Value, VyprError> {
                             let dx = x - cx;
                             let dy = y - cy;
                             
-                            // Distance formula to check if inside circle
                             if dx * dx + dy * dy <= rad_sq {
                                 let idx = ((y as usize) * (width as usize) + (x as usize)) * 3;
                                 pixels[idx] = *r as u8;

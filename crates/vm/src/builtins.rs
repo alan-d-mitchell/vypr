@@ -30,16 +30,17 @@ pub fn vypr_int(args: &[Value]) -> Result<Value, VyprError> {
         return Ok(Value::Int(0));
     }
 
+    if let Some(s) = args[0].as_str() {
+        return match s.parse::<i64>() {
+            Ok(val) => Ok(Value::Int(val)),
+            Err(_) => Err(error("R002", format!("invalid literal for int(): '{}'", s))),
+        };
+    }
+
     match &args[0] {
         Value::Int(i) => Ok(Value::Int(*i)),
         Value::Float(f) => Ok(Value::Int(*f as i64)),
-        Value::Str(s) => match s.parse::<i64>() {
-            Ok(val) => Ok(Value::Int(val)),
-            Err(_) => Err(error("R002", format!("invalid literal for int(): '{}'", s))),
-        },
-
         Value::Bool(b) => Ok(Value::Int(if *b { 1 } else { 0 })),
-
         _ => Err(error("R002", format!("int() argument must be a string or a number, not '{}'", args[0].get_type()))),
     }
 }
@@ -49,26 +50,27 @@ pub fn vypr_float(args: &[Value]) -> Result<Value, VyprError> {
         return Ok(Value::Float(0.0)); 
     }
 
+    if let Some(s) = args[0].as_str() {
+        return match s.parse::<f64>() {
+            Ok(val) => Ok(Value::Float(val)),
+            Err(_) => Err(error("R002", format!("could not convert string to float: '{}'", s))),
+        };
+    }
+
     match &args[0] {
         Value::Float(f) => Ok(Value::Float(*f)),
         Value::Int(i) => Ok(Value::Float(*i as f64)),
-        Value::Str(s) => match s.parse::<f64>() {
-            Ok(val) => Ok(Value::Float(val)),
-            Err(_) => Err(error("R002", format!("could not convert string to float: '{}'", s))),
-        },
-
         Value::Bool(b) => Ok(Value::Float(if *b { 1.0 } else { 0.0 })),
-
         _ => Err(error("R002", format!("float() argument must be a string or a number, not '{}'", args[0].get_type()))),
     }
 }
 
 pub fn vypr_str(args: &[Value]) -> Result<Value, VyprError> {
     if args.is_empty() {
-        return Ok(Value::Str(Rc::new(String::new()))); 
+        return Ok(Value::make_string("")); 
     }
 
-    Ok(Value::Str(Rc::new(args[0].to_string())))
+    Ok(Value::make_string(&args[0].to_string()))
 }
 
 pub fn vypr_len(args: &[Value]) -> Result<Value, VyprError> {
@@ -76,16 +78,18 @@ pub fn vypr_len(args: &[Value]) -> Result<Value, VyprError> {
         return Err(error("R014", format!("len() takes exactly 1 argument, got {}", args.len())));
     }
 
+    if let Some(s) = args[0].as_str() {
+        return Ok(Value::Int(s.chars().count() as i64));
+    }
+
     match &args[0] {
         Value::List(items) => Ok(Value::Int(items.borrow().len() as i64)),
-        Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
         Value::Range(bounds) => {
             let (start, stop) = **bounds;
             let len = if stop > start { stop - start } else { 0 };
             Ok(Value::Int(len))
         },
         Value::Dict(dict) => Ok(Value::Int(dict.borrow().len() as i64)),
-
         _ => Err(error("R002", format!("object of type {} has no len()", args[0].get_type())))
     }
 }
@@ -98,7 +102,7 @@ pub fn vypr_range(args: &[Value]) -> Result<Value, VyprError> {
     let mut start = 0;
     let mut stop = 0;
 
-if args.len() == 1 {
+    if args.len() == 1 {
         if let Value::Int(s) = args[0] {
             stop = s;
         } else {
@@ -130,18 +134,16 @@ pub fn vypr_list(args: &[Value]) -> Result<Value, VyprError> {
         return Err(error("R014", format!("list() expected at most 1 argument, got {}", args.len())));
     }
 
+    if let Some(s) = args[0].as_str() {
+        let mut chars = Vec::new();
+        for c in s.chars() {
+            chars.push(Value::make_string(&c.to_string()));
+        }
+        return Ok(Value::List(Rc::new(RefCell::new(chars))));
+    }
+
     match &args[0] {
         Value::List(items) => Ok(Value::List(Rc::new(RefCell::new(items.borrow().clone())))),
-
-        Value::Str(s) => {
-            let mut chars = Vec::new();
-            for c in s.chars() {
-                chars.push(Value::Str(Rc::new(c.to_string())));
-            }
-
-            Ok(Value::List(Rc::new(RefCell::new(chars))))
-        }
-
         Value::Range(bounds) => {
             let (start, stop) = **bounds;
             let mut items = Vec::new();
@@ -151,7 +153,6 @@ pub fn vypr_list(args: &[Value]) -> Result<Value, VyprError> {
 
             Ok(Value::List(Rc::new(RefCell::new(items))))
         } 
-
         _ => Err(error("R002", format!("'{}' object is not iterable", args[0].get_type()))), 
     }
 }
@@ -161,34 +162,31 @@ pub fn vypr_reversed(args: &[Value]) -> Result<Value, VyprError> {
         return Err(error("R014", format!("reversed() takes exactly 1 argument, got {}", args.len())));
     }
 
+    if let Some(s) = args[0].as_str() {
+        let chars: Vec<Value> = s.chars()
+            .rev()
+            .map(|c| Value::make_string(&c.to_string()))
+            .collect();
+        return Ok(Value::List(Rc::new(RefCell::new(chars))));
+    }
+
     match &args[0] {
         Value::List(items) => {
             let mut reversed = items.borrow().clone();
             reversed.reverse();
             Ok(Value::List(Rc::new(RefCell::new(reversed))))
         }
-
-        Value::Str(s) => {
-            let chars: Vec<Value> = s.chars()
-                .rev()
-                .map(|c| Value::Str(Rc::new(c.to_string())))
-                .collect();
-
-            Ok(Value::List(Rc::new(RefCell::new(chars))))
-        }
-
         Value::Range(bounds) => {
             let (start, stop) = **bounds;
             let mut items = Vec::new();
             let len = if stop > start { stop - start } else { 0 };
-            
+
             for i in (0..len).rev() {
                 items.push(Value::Int(start + i));
             }
-            
+
             Ok(Value::List(Rc::new(RefCell::new(items))))
         }
-
         _ => Err(error("R002", format!("'{}' object is not reversible", args[0].get_type())))
     }
 }

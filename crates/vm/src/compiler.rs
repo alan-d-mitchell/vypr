@@ -30,7 +30,6 @@ impl Compiler {
         VyprError::new(code, message, span)
     }
 
-    /// ENTRY POINT: Orchestrates compiling the entire program
     pub fn compile_program(self, mir_program: &MIRProgram) -> Result<Chunk, VyprError> {
         let mut script_chunk = Chunk::new();
 
@@ -45,38 +44,32 @@ impl Compiler {
             }));
 
             let func_val_idx = script_chunk.add_constant(func_val);
-            let name_idx = script_chunk.add_constant(Value::Str(Rc::new(func.name.clone())));
+            let name_idx = script_chunk.add_constant(Value::make_string(&func.name));
 
             script_chunk.write(OpCode::Constant(func_val_idx), Span::default());
             script_chunk.write(OpCode::DefineGlobal(name_idx, DataType::Function), Span::default());
         }
 
-        // Call <script> to kick off execution
-        let script_name_idx = script_chunk.add_constant(Value::Str(Rc::new("<script>".to_string())));
+        let script_name_idx = script_chunk.add_constant(Value::make_string("<script>"));
         script_chunk.write(OpCode::GetGlobal(script_name_idx), Span::default());
         script_chunk.write(OpCode::Call(0), Span::default());
 
         Ok(script_chunk)
     }
 
-    /// Compiles a single MIR function into a flat Chunk of bytecode
     pub fn compile_function(mut self, mir_func: &MIRFunction) -> Result<Chunk, VyprError> {
-        // --- PASS 1: EMIT BYTES & RECORD OFFSETS ---
         for (bb_idx, block) in mir_func.basic_blocks.iter().enumerate() {
             let current_bb = BasicBlockID(bb_idx);
             
             self.bb_offsets.insert(current_bb, self.chunk.code.len());
 
-            // 1. Emit Statements
             for stmt in &block.statements {
                 self.compile_statement(stmt, &mir_func.locals)?;
             }
 
-            // 2. Emit Terminator
             self.compile_terminator(&block.terminator, current_bb, Span::default())?;
         }
 
-        // --- PASS 2: BACKPATCH FORWARD JUMPS ---
         for (inst_idx, target_bb) in &self.forward_jumps {
             let target_offset = *self.bb_offsets.get(target_bb).expect("target bb not found!");
             let jump_length = target_offset - (*inst_idx + 1);
@@ -91,50 +84,41 @@ impl Compiler {
         Ok(self.chunk)
     }
 
-    // --- STATEMENT COMPILATION ---
     fn compile_statement(&mut self, stmt: &Statement, locals: &[LocalDecl]) -> Result<(), VyprError> {
         let span = stmt.span;
 
         match &stmt.kind {
             StatementKind::Assign(place, rval) => {
-                // 1. Evaluate the right-hand side (leaves value on stack)
                 self.compile_rvalue(rval, span)?;
 
-                // 2. Type Safety Lock
                 let local_decl = &locals[place.local.0];
                 let data_type = self.type_expr_to_datatype(&local_decl.ty);
                 if data_type != DataType::Any {
                     self.chunk.write(OpCode::ASSERT_TYPE(data_type), span);
                 }
 
-                // 3. Store the value
                 if place.projection.is_empty() {
-                    // Standard local variable assignment
                     self.chunk.write(OpCode::SetLocal(place.local.0), span);
                 } else {
-                    // It's a mutation of an existing object/array (e.g., list[0] = 5)
-                    self.chunk.write(OpCode::GetLocal(place.local.0), span); // Push base object
+                    self.chunk.write(OpCode::GetLocal(place.local.0), span);
 
                     for (i, proj) in place.projection.iter().enumerate() {
                         let is_last = i == place.projection.len() - 1;
                         
                         match proj {
                             ProjectionElem::Index(idx_local) => {
-                                self.chunk.write(OpCode::GetLocal(idx_local.0), span); // Push index
+                                self.chunk.write(OpCode::GetLocal(idx_local.0), span);
                                 if is_last {
-                                    // Requires OpCode::SetSubscript to be added to VM!
                                     self.chunk.write(OpCode::SetSubscript, span); 
                                 } else {
                                     self.chunk.write(OpCode::GetSubscript, span);
                                 }
                             }
                             ProjectionElem::Property(name) => {
-                                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
+                                let name_idx = self.chunk.add_constant(Value::make_string(name));
                                 if is_last {
-                                    // Requires OpCode::SetProperty to be added to VM!
                                     self.chunk.write(OpCode::SetProperty(name_idx), span);
                                 } else {
-                                    // Requires OpCode::GetProperty to be added to VM!
                                     self.chunk.write(OpCode::GetProperty(name_idx), span);
                                 }
                             }
@@ -145,14 +129,14 @@ impl Compiler {
 
             StatementKind::DefineGlobal(name, ty, rval) => {
                 self.compile_rvalue(rval, span)?;
-                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
+                let name_idx = self.chunk.add_constant(Value::make_string(name));
                 let dtype = self.type_expr_to_datatype(ty);
                 self.chunk.write(OpCode::DefineGlobal(name_idx, dtype), span);
             }
 
             StatementKind::AssignGlobal(name, rval) => {
                 self.compile_rvalue(rval, span)?;
-                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
+                let name_idx = self.chunk.add_constant(Value::make_string(name));
                 self.chunk.write(OpCode::SetGlobal(name_idx), span);
             }
         }
@@ -160,7 +144,6 @@ impl Compiler {
         Ok(())
     }
 
-    // --- RVALUE & OPERAND COMPILATION ---
     fn compile_rvalue(&mut self, rval: &Rvalue, span: Span) -> Result<(), VyprError> {
         match rval {
             Rvalue::Use(operand) => self.compile_operand(operand, span)?,
@@ -169,7 +152,6 @@ impl Compiler {
                 self.compile_operand(lhs, span)?;
                 self.compile_operand(rhs, span)?;
                 
-                // Map ALL VIR operators to OpCodes
                 match op {
                     VIRBinOp::Add => self.chunk.write(OpCode::Add, span),
                     VIRBinOp::Sub => self.chunk.write(OpCode::Sub, span),
@@ -181,7 +163,7 @@ impl Compiler {
                     VIRBinOp::Eq => self.chunk.write(OpCode::Equal, span),
                     VIRBinOp::Ne => {
                         self.chunk.write(OpCode::Equal, span);
-                        self.chunk.write(OpCode::Not, span); // Neq is just (Eq -> Not)
+                        self.chunk.write(OpCode::Not, span);
                     }
                     VIRBinOp::And => self.chunk.write(OpCode::And, span),
                     VIRBinOp::Or => self.chunk.write(OpCode::Or, span),
@@ -218,7 +200,7 @@ impl Compiler {
             }
 
             Rvalue::Import(module) => {
-                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(module.clone())));
+                let name_idx = self.chunk.add_constant(Value::make_string(module));
                 self.chunk.write(OpCode::Import(name_idx), span);
             }
 
@@ -233,7 +215,6 @@ impl Compiler {
                 }));
 
                 let idx = self.chunk.add_constant(val);
-
                 self.chunk.write(OpCode::Constant(idx), span)
             }
 
@@ -272,7 +253,7 @@ impl Compiler {
                             self.chunk.write(OpCode::GetSubscript, span);
                         }
                         ProjectionElem::Property(name) => {
-                            let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
+                            let name_idx = self.chunk.add_constant(Value::make_string(name));
                             self.chunk.write(OpCode::GetProperty(name_idx), span);
                         }
                     }
@@ -282,7 +263,7 @@ impl Compiler {
                 let val = match c {
                     vir::context::Constant::Int(i) => Value::Int(*i),
                     vir::context::Constant::Float(f) => Value::Float(*f),
-                    vir::context::Constant::String(s) => Value::Str(Rc::new(s.clone())),
+                    vir::context::Constant::String(s) => Value::make_string(s),
                     vir::context::Constant::Bool(b) => Value::Bool(*b),
                     vir::context::Constant::None => Value::None,
                 };
@@ -290,14 +271,13 @@ impl Compiler {
                 self.chunk.write(OpCode::Constant(idx), span);
             }
             Operand::Static(name) => {
-                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(name.clone())));
+                let name_idx = self.chunk.add_constant(Value::make_string(name));
                 self.chunk.write(OpCode::GetGlobal(name_idx), span);
             }
         }
         Ok(())
     }
 
-    // --- TERMINATOR COMPILATION ---
     fn compile_terminator(&mut self, terminator: &Terminator, current_bb: BasicBlockID, span: Span) -> Result<(), VyprError> {
         match terminator {
             Terminator::Goto { target } => {
@@ -330,7 +310,7 @@ impl Compiler {
                     self.compile_operand(arg, span)?;
                 }
                 
-                let name_idx = self.chunk.add_constant(Value::Str(Rc::new(method_name.clone())));
+                let name_idx = self.chunk.add_constant(Value::make_string(method_name));
                 self.chunk.write(OpCode::Invoke(name_idx, args.len()), span);
                 self.chunk.write(OpCode::SetLocal(destination.local.0), span);
 
@@ -345,7 +325,6 @@ impl Compiler {
         Ok(())
     }
 
-    // --- HELPERS ---
     fn emit_jump_or_loop(&mut self, target: BasicBlockID, _current_bb: BasicBlockID, jump_op: fn(usize) -> OpCode, span: Span) {
         if let Some(&target_offset) = self.bb_offsets.get(&target) {
             let current_offset = self.chunk.code.len() + 1; 

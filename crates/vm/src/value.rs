@@ -86,6 +86,7 @@ pub enum Value {
     Bool(bool),
     None,
     Str(Rc<String>),
+    InlineStr(u8, [u8; 14]),
     List(Rc<RefCell<Vec<Value>>>),
     Dict(Rc<RefCell<HashMap<String, Value>>>),
     Range(Box<(i64, i64)>),
@@ -97,12 +98,38 @@ pub enum Value {
 
 impl Value {
 
+    pub fn make_string(s: &str) -> Self {
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+
+        if len <= 14 {
+            let mut buf = [0; 14];
+            buf[..len].copy_from_slice(bytes);
+
+            Value::InlineStr(len as u8, buf)
+        } else {
+            Value::Str(Rc::new(s.to_string()))
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::Str(s) => Some(s.as_str()),
+            Value::InlineStr(len, buf) => {
+                let valid_str = std::str::from_utf8(&buf[..(*len as usize)]).unwrap();
+                Some(valid_str)
+            }
+            
+            _ => None
+        }
+    }
+
     pub fn get_type(&self) -> DataType {
         match self {
             Value::Int(_) => DataType::Int,
             Value::Float(_) => DataType::Float,
             Value::Bool(_) => DataType::Bool,
-            Value::Str(_) => DataType::Str,
+            Value::Str(_) | Value::InlineStr(_, _) => DataType::Str,
             Value::List(_) => DataType::List,
             Value::Dict(_) => DataType::Dict,
             Value::None => DataType::None,
@@ -119,6 +146,7 @@ impl Value {
             Value::Int(i) => *i != 0,
             Value::Float(f) => *f != 0.0,
             Value::Str(s) => !s.is_empty(),
+            Value::InlineStr(len, _) => *len > 0,
             Value::Range(bounds) => {
                 let (start, stop) = **bounds;
                 start < stop
@@ -138,6 +166,7 @@ impl Value {
 
         match self {
             Value::Str(s) => format!("'{}'", s),
+            Value::InlineStr(_, _) => format!("'{}'", self.as_str().unwrap()),
             Value::List(items) => {
                 let borrowed = items.borrow();
                 let elements: Vec<String> = borrowed.iter().map(|v| v.repr_inner(depth + 1)).collect();
@@ -173,6 +202,7 @@ impl fmt::Display for Value {
             }
             Value::Bool(v) => write!(f, "{}", v),
             Value::Str(v) => write!(f, "{}", v),
+            Value::InlineStr(_, _) => write!(f, "{}", self.as_str().unwrap()),
             Value::List(_) => write!(f, "{}", self.repr_inner(0)),
             Value::Dict(_) => write!(f, "{}", self.repr_inner(0)),
             Value::Range(bounds) => {

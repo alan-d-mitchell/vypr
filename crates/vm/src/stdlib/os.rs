@@ -31,9 +31,9 @@ fn os_getenv(args: &[Value]) -> Result<Value, VyprError> {
         return Err(error("R014", format!("getenv() takes exactly 1 argument, got {}", args.len())));
     }
 
-    if let Value::Str(key) = &args[0] {
-        match env::var(key.as_str()) {
-            Ok(val) => Ok(Value::Str(Rc::new(val))),
+    if let Some(key) = args[0].as_str() {
+        match env::var(key) {
+            Ok(val) => Ok(Value::make_string(&val)),
             Err(_) => Ok(Value::None),
         }
     } else {

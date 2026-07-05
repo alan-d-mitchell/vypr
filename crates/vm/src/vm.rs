@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use error::error::{Span, VyprError};
-use crate::{builtins, bytecode::{Chunk, OpCode}, value::{self, DataType, Value, NativeFunction}};
+use crate::{builtins, bytecode::{Chunk, OpCode}, value::{DataType, Value, NativeFunction}};
 
 #[derive(Clone)]
 struct GlobalVar {
@@ -274,6 +274,30 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                     let index_val = self.pop()?;
                     let list_val = self.pop()?;
 
+                    if let Some(s) = list_val.as_str() {
+                        let index = match index_val {
+                            Value::Int(i) => i,
+                            _ => return Err(self.error("R002", "string index must be an integer"))
+                        };
+                        let char_count = s.chars().count() as i64;
+                        let effective_index = if index < 0 {
+                            char_count + index
+                        } else {
+                            index
+                        };
+
+                        if effective_index < 0 || effective_index >= char_count {
+                            return Err(self.error("R003", "string index out of range"));
+                        }
+
+                        if let Some(c) = s.chars().nth(effective_index as usize) {
+                            self.push(Value::make_string(&c.to_string()));
+                        } else {
+                            return Err(self.error("R003", "string index out of range"));
+                        }
+                        continue;
+                    }
+
                     match list_val {
                         Value::List(items) => {
                             let index = match index_val {
@@ -295,30 +319,6 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                             self.push(borrowed[effective_index as usize].clone());
                         }
 
-                        Value::Str(s) => {
-                            let index = match index_val {
-                                Value::Int(i) => i,
-                                _ => return Err(self.error("R002", "string index must be an integer"))
-                            };
-                            let char_count = s.chars().count() as i64;
-
-                            let effective_index = if index < 0 {
-                                char_count + index
-                            } else {
-                                index
-                            };
-
-                            if effective_index < 0 || effective_index >= char_count {
-                                return Err(self.error("R003", "string index out of range"));
-                            }
-
-                            if let Some(c) = s.chars().nth(effective_index as usize) {
-                                self.push(Value::Str(Rc::new(c.to_string())));
-                            } else {
-                                return Err(self.error("R003", "string index out of range"));
-                            }
-                        }
-
                         Value::Range(bounds) => {
                             let (start, stop) = *bounds;
                             let index = match index_val {
@@ -336,9 +336,9 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                         }
 
                         Value::Dict(dict) => {
-                            let key_str = match index_val {
-                                Value::Str(s) => s.to_string(),
-                                _ => index_val.to_string(),
+                            let key_str = match index_val.as_str() {
+                                Some(s) => s.to_string(),
+                                None => index_val.to_string(),
                             };
                             
                             if let Some(val) = dict.borrow().get(&key_str) {
@@ -378,9 +378,9 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                         }
                         
                         Value::Dict(dict) => {
-                            let key_str = match index_val {
-                                Value::Str(s) => s.to_string(),
-                                _ => index_val.to_string(),
+                            let key_str = match index_val.as_str() {
+                                Some(s) => s.to_string(),
+                                None => index_val.to_string(),
                             };
                             dict.borrow_mut().insert(key_str, value);
                         }
@@ -440,9 +440,9 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                         let value = self.pop()?;
                         let key = self.pop()?;
 
-                        let key_str = match key {
-                            Value::Str(s) => s.to_string(),
-                            _ => key.to_string(), 
+                        let key_str = match key.as_str() {
+                            Some(s) => s.to_string(),
+                            None => key.to_string(), 
                         };
 
                         dict.insert(key_str, value);
@@ -453,17 +453,20 @@ pub fn run(&mut self) -> Result<(), VyprError> {
 
                 OpCode::Length => {
                     let val = self.pop()?;
+                    
+                    if let Some(s) = val.as_str() {
+                        self.push(Value::Int(s.chars().count() as i64));
+                        continue;
+                    }
+
                     match val {
                         Value::List(items) => self.push(Value::Int(items.borrow().len() as i64)),
                         Value::Dict(dict) => self.push(Value::Int(dict.borrow().len() as i64)),
-                        Value::Str(s) => self.push(Value::Int(s.chars().count() as i64)),
-
                         Value::Range(bounds) => {
                             let (start, stop) = *bounds;
                             let len = if stop > start { stop - start } else { 0 };
                             self.push(Value::Int(len));
                         }
-
                         _ => return Err(self.error("R002", "object has no length")),
                     }
                 }
@@ -501,16 +504,18 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                     let b = self.pop()?;
                     let a = self.pop()?;
 
-                    match (a, b) {
-                        (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a + b)),
-                        (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a + b)),
+                    if let (Some(s_a), Some(s_b)) = (a.as_str(), b.as_str()) {
+                        self.push(Value::make_string(&format!("{}{}", s_a, s_b)));
+                    } else {
+                        match (a, b) {
+                            (Value::Int(a), Value::Int(b)) => self.push(Value::Int(a + b)),
+                            (Value::Float(a), Value::Float(b)) => self.push(Value::Float(a + b)),
 
-                        (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 + b)),
-                        (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a + b as f64)),
+                            (Value::Int(a), Value::Float(b)) => self.push(Value::Float(a as f64 + b)),
+                            (Value::Float(a), Value::Int(b)) => self.push(Value::Float(a + b as f64)),
 
-                        (Value::Str(a), Value::Str(b)) => self.push(Value::Str(Rc::new(format!("{}{}", a, b)))),
-
-                        _ => return Err(self.error("R002", "invalid operands for +")),
+                            _ => return Err(self.error("R002", "invalid operands for +")),
+                        }
                     }
                 }
 
@@ -756,18 +761,21 @@ pub fn run(&mut self) -> Result<(), VyprError> {
 
                     let mut formatted = String::new();
                     for part in parts {
-                        match part {
-                            Value::Str(s) => formatted.push_str(&s),
-                            Value::Int(i) => formatted.push_str(&i.to_string()),
-                            Value::Float(f) => formatted.push_str(&f.to_string()),
-                            Value::Bool(b) => formatted.push_str(if b { "true" } else { "false" }),
-                            Value::List(_) | Value::Range(_) => formatted.push_str(&part.to_string()),
-                            Value::None => formatted.push_str("None"),
-                            _ => return Err(self.error("R002", "cannot format this type"))
+                        if let Some(s) = part.as_str() {
+                            formatted.push_str(s);
+                        } else {
+                            match part {
+                                Value::Int(i) => formatted.push_str(&i.to_string()),
+                                Value::Float(f) => formatted.push_str(&f.to_string()),
+                                Value::Bool(b) => formatted.push_str(if b { "true" } else { "false" }),
+                                Value::List(_) | Value::Range(_) => formatted.push_str(&part.to_string()),
+                                Value::None => formatted.push_str("None"),
+                                _ => return Err(self.error("R002", "cannot format this type"))
+                            }
                         }
                     }
 
-                    self.push(Value::Str(Rc::new(formatted)))
+                    self.push(Value::make_string(&formatted))
                 }
 
                 OpCode::Return => {
@@ -869,9 +877,9 @@ pub fn run(&mut self) -> Result<(), VyprError> {
     }
 
     pub(crate) fn read_string(&self, idx: usize) -> Result<String, VyprError> {
-        match self.read_constant(idx) {
-            Value::Str(s) => Ok(s.to_string()),
-            _ => Err(self.error("R005", "expected string in constant pool")),
+        match self.read_constant(idx).as_str() {
+            Some(s) => Ok(s.to_string()),
+            None => Err(self.error("R005", "expected string in constant pool")),
         }
     }
 
