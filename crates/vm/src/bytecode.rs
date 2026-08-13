@@ -195,17 +195,14 @@ impl Chunk {
                     writeln!(&mut s, "{:<16} {:4} '{}'", "CONSTANT", idx, val).unwrap();
                 }
 
-                OpCode::DefineGlobal(idx, dtype) => {
-                    let val = &self.constants[*idx];
-                    writeln!(&mut s, "{:<16} {:4} '{}' (type: {:?})", "DEFINE_GLOBAL", idx, val, dtype).unwrap();
+                OpCode::DefineGlobal(slot, dtype) => {
+                    writeln!(&mut s, "{:<16} g{:4} (type: {:?})", "DEFINE_GLOBAL", slot, dtype).unwrap();
                 }
-                OpCode::GetGlobal(idx) => {
-                    let name = &self.constants[*idx];
-                    writeln!(&mut s, "{:<16} {:4} '{}'", "GET_GLOBAL", idx, name).unwrap();
+                OpCode::GetGlobal(slot) => {
+                    writeln!(&mut s, "{:<16} g{:4}", "GET_GLOBAL", slot).unwrap();
                 }
-                OpCode::SetGlobal(idx) => {
-                    let name = &self.constants[*idx];
-                    writeln!(&mut s, "{:<16} {:4} '{}'", "SET_GLOBAL", idx, name).unwrap();
+                OpCode::SetGlobal(slot) => {
+                    writeln!(&mut s, "{:<16} {:4}", "SET_GLOBAL", slot).unwrap();
                 }
 
                 OpCode::Invoke(idx, arg_count) => {
@@ -232,7 +229,8 @@ impl Chunk {
                 }
 
                 OpCode::Import(idx) => {
-                    writeln!(&mut s, "{:<16} {:4}", "IMPORT", idx).unwrap();
+                    let name = &self.constants[*idx];
+                    writeln!(&mut s, "{:<16} {:4} '{}'", "IMPORT", idx, name).unwrap();
                 }
 
                 OpCode::ASSERT_TYPE(ty) => {
@@ -245,19 +243,8 @@ impl Chunk {
 
         for (i, constant) in self.constants.iter().enumerate() {
             if let Value::Function(function) = constant {
-                writeln!(&mut s, "").unwrap();
-                
-                let function_name = if i + 1 < self.constants.len() {
-                    if let Some(name) = self.constants[i + 1].as_str() {
-                        name.to_string()
-                    } else {
-                        format!("<fn {}>", i)
-                    }
-                } else {
-                    format!("<fn {}>", i)
-                };
-
-                let inner_output = function.chunk.disassemble(&function_name);
+                writeln!(&mut s).unwrap();
+                let inner_output = function.chunk.disassemble(&format!("<fn {}>", i));
                 s.push_str(&inner_output);
             }
         }
