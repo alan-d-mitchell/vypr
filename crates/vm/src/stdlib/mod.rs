@@ -2,6 +2,7 @@ pub mod time;
 pub mod math;
 pub mod os;
 pub mod canvas;
+pub mod random;
 
 use error::error::{Span, VyprError};
 
@@ -17,6 +18,7 @@ pub fn load_module(name: &str) -> Option<Value> {
         "math" => Some(math::create_module()),
         "os" => Some(os::create_module()),
         "canvas" => Some(canvas::create_module()),
+        "random" => Some(random::create_module()),
         _ => None, 
     }
 }

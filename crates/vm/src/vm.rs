@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use error::error::{Span, VyprError};
-use crate::{builtins, bytecode::{Chunk, OpCode}, value::{DataType, Value, NativeFunction}};
+use crate::{builtins, bytecode::{Chunk, OpCode}, stdlib, value::{DataType, DictKey, NativeFunction, Value}};
 
 #[derive(Clone)]
 struct GlobalVar {
@@ -9,96 +9,65 @@ struct GlobalVar {
 }
 
 struct CallFrame {
-    chunk: Chunk, // The code being executed
+    chunk: Rc<Chunk>, // The code being executed
     ip: usize,    // Instruction pointer for this frame
-    frame_start: usize // where function locals begin on the stack
+    frame_start: usize, // where function locals begin on the stack
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MethodCache {
+    EMPTY,
+    ListAppend,
+    ListPop,
+    StringUpper,
+    StringLower,
 }
 
 pub struct VM {
     frames: Vec<CallFrame>, // The call stack
     stack: Vec<Value>,      // The operand stack
-    globals: HashMap<String, GlobalVar>
+    globals: Vec<GlobalVar>,
 }
 
 impl VM {
 
     pub fn new(chunk: Chunk) -> Self {
-        let mut globals = HashMap::new();
+        let globals = vec![
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "print".into(), function: builtins::vypr_print })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "int".into(), function: builtins::vypr_int })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "float".into(), function: builtins::vypr_float })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "str".into(), function: builtins::vypr_str })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "len".into(), function: builtins::vypr_len })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "range".into(), function: builtins::vypr_range })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "list".into(), function: builtins::vypr_list })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "reversed".into(), function: builtins::vypr_reversed })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "input".into(), function: builtins::vypr_input })), lock: DataType::Function },
+            GlobalVar { value: Value::Native(Rc::new(NativeFunction { name: "open".into(), function: builtins::vypr_open })), lock: DataType::Function },
+        ];
 
-        globals.insert("print".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "print".to_string(),
-                function: builtins::vypr_print
-            })),
-            lock: DataType::Function,
-        });
-
-        globals.insert("int".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "int".to_string(),
-                function: builtins::vypr_int
-            })),
-            lock: DataType::Function
-        });
-
-        globals.insert("float".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "float".to_string(),
-                function: builtins::vypr_float
-            })),
-            lock: DataType::Function
-        });
-
-        globals.insert("str".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "str".to_string(),
-                function: builtins::vypr_str
-            })),
-            lock: DataType::Function
-        });
-
-        globals.insert("len".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "len".to_string(),
-                function: builtins::vypr_len
-            })),
-            lock: DataType::Function
-        });
-
-        globals.insert("range".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "range".to_string(),
-                function: builtins::vypr_range
-            })),
-            lock: DataType::Function
-        });
-
-        globals.insert("list".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "list".to_string(),
-                function: builtins::vypr_list
-            })),
-            lock: DataType::Function
-        });
-
-        globals.insert("reversed".to_string(), GlobalVar {
-            value: Value::Native(Rc::new(NativeFunction {
-                name: "reversed".to_string(),
-                function: builtins::vypr_reversed
-            })),
-            lock: DataType::Function
-        });
+        let mut chunk = chunk;
+        chunk.init_cache();
 
         let main_frame = CallFrame {
-            chunk,
+            chunk: Rc::new(chunk),
             ip: 0,
-            frame_start: 0
+            frame_start: 0,
         };
 
         Self {
             frames: vec![main_frame],
             stack: Vec::new(),
             globals,
+        }
+    }
+
+    pub(crate) fn set_cache(&mut self, ip: usize, cache_type: MethodCache) {
+        if let Some(frame) = self.frames.last() {
+            let mut cache = frame.chunk.cache.borrow_mut();
+
+            if ip < cache.len() {
+                cache[ip] = cache_type;
+            }
         }
     }
 
@@ -114,7 +83,7 @@ impl VM {
         VyprError::new(code, message, span)
     }
 
-pub fn run(&mut self) -> Result<(), VyprError> {
+    pub fn run(&mut self) -> Result<(), VyprError> {
         loop {
             if self.current_frame().ip >= self.current_frame().chunk.code.len() {
                 if self.frames.len() == 1 {
@@ -135,91 +104,73 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                     self.push(c);
                 }
 
-                OpCode::DefineGlobal(name_idx, type_lock) => {
-                    let name = self.read_string(name_idx)?;
+                OpCode::DefineGlobal(slot, type_lock) => {
                     let val = self.pop()?;
-                    
-                    let mut should_error = false;
-                    let mut existing_lock = DataType::Any;
-                    
-                    if let Some(existing) = self.globals.get(&name) {
-                        existing_lock = existing.lock;
 
-                        if existing_lock != DataType::Any && val.get_type() != existing_lock {
-                            should_error = true;
-                        }
+                    // ensure the vector is resized if this is a new global slot
+                    if slot >= self.globals.len() {
+                        self.globals.resize(
+                            slot + 1,
+                            GlobalVar {
+                                value: Value::None,
+                                lock: DataType::Any,
+                            },
+                        );
                     }
 
-                    if should_error {
-                        return Err(self.error("R002", format!(
-                            "type error: variable '{}' is locked to {}, but got {}", 
-                            name, existing_lock, val.get_type()
-                        )));
+                    let existing_lock = self.globals[slot].lock;
+                    if existing_lock != DataType::Any && val.get_type() != existing_lock {
+                        return Err(self.error(
+                            "R002",
+                            format!("type error: variable slot {} locked to {}, got {}", slot, existing_lock, val.get_type()),
+                        ));
                     }
 
-                    if let Some(existing) = self.globals.get_mut(&name) {
-                        existing.value = val;
-
-                        if type_lock != DataType::Any {
-                            existing.lock = type_lock; 
-                        }
-                    } else {
-                        self.globals.insert(name, GlobalVar {
-                            value: val,
-                            lock: type_lock,
-                        });
+                    let existing = &mut self.globals[slot];
+                    existing.value = val;
+                    if type_lock != DataType::Any {
+                        existing.lock = type_lock;
                     }
                 }
 
-                OpCode::GetGlobal(name_idx) => {
-                    let name = self.read_string(name_idx)?;
-                    let mut module_to_load = None;
-
-                    if let Some(global) = self.globals.get(&name) {
-                        if let Value::UnloadedModule(mod_name) = &global.value {
-                            module_to_load = Some(mod_name.to_string());
-                        }
-                    } else {
-                        return Err(self.error("R001", format!("undefined variable '{}'", name)));
+                OpCode::GetGlobal(slot) => {
+                    if slot >= self.globals.len() {
+                        return Err(self.error("R001", format!("undefined global variable slot {}", slot)));
                     }
 
-                    if let Some(mod_name) = module_to_load {
-                        if let Some(loaded_module) = crate::stdlib::load_module(&mod_name) {
-                            self.globals.get_mut(&name).unwrap().value = loaded_module; 
+                    let global_val = &self.globals[slot].value;
+
+                    if let Value::UnloadedModule(mod_name) = global_val {
+                        let mod_name = mod_name.clone();
+                        if let Some(loaded_module) = stdlib::load_module(&mod_name) {
+                            self.globals[slot].value = loaded_module.clone();
+                            self.push(loaded_module);
+                            continue;
                         } else {
-                            return Err(self.error("R009", format!("module not found: no module named '{}'", mod_name)));
+                            return Err(self.error("R009", format!("module not found: '{}'", mod_name)));
                         }
                     }
 
-                    let final_val = self.globals.get(&name).unwrap().value.clone();
-                    self.push(final_val);
+                    self.push(global_val.clone());
                 }
 
-                OpCode::SetGlobal(name_idx) => {
-                    let name = self.read_string(name_idx)?;
+                OpCode::SetGlobal(slot) => {
+                    if slot >= self.globals.len() {
+                        return Err(self.error("R001", format!("undefined global variable slot {}", slot)));
+                    }
+
                     let new_val = self.pop()?;
 
-                    let existing_lock = self.globals.get(&name).map(|g| g.lock);
-
-                    if let Some(lock) = existing_lock {
-                        if lock != DataType::Any {
-                            let new_type = new_val.get_type();
-
-                            if new_type != lock {
-                                return Err(self.error("R002", format!(
-                                    "type error: variable '{}' is locked to {}, but got {}", 
-                                    name, lock, new_type
-                                )));
-                            }
-                        }
-
-                        self.globals.get_mut(&name).unwrap().value = new_val;
-                    } else {
-                        self.globals.insert(name, GlobalVar {
-                            value: new_val,
-                            lock: DataType::Any,
-                        });
+                    let existing_lock = self.globals[slot].lock;
+                    if existing_lock != DataType::Any && new_val.get_type() != existing_lock {
+                        return Err(self.error(
+                            "R002",
+                            format!("type error: variable slot {} locked to {}, got {}", slot, existing_lock, new_val.get_type()),
+                        ));
                     }
+
+                    let existing = &mut self.globals[slot];
+                    existing.value = new_val;
                 }
 
                 OpCode::GetLocal(slot) => {
@@ -239,6 +190,105 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                 }
 
                 OpCode::Invoke(name_idx, arg_count) => {
+                    let current_ip = self.current_frame().ip - 1;
+
+                    let cached_type = {
+                        let cache = self.current_frame().chunk.cache.borrow();
+
+                        if current_ip < cache.len() {
+                            cache[current_ip]
+                        } else {
+                            MethodCache::EMPTY
+                        }
+                    };
+
+                    match cached_type {
+                        MethodCache::ListAppend => {
+                            let arg = self.pop()?;
+                            let obj = self.pop()?;
+
+                            // safety guard: check if variable is still a list
+                            if let Value::List(ref items) = obj {
+                                items.borrow_mut().push(arg);
+                                self.push(Value::None);
+                                continue; // instant jump to next opcode
+                            } else {
+                                // type changed -> slow path
+                                self.push(obj);
+                                self.push(arg);
+                                self.set_cache(current_ip, MethodCache::EMPTY);
+                            }
+                        },
+
+                        MethodCache::ListPop => {
+                            if arg_count == 0 {
+                                let obj = self.pop()?;
+
+                                if let Value::List(ref items) = obj {
+                                    if let Some(popped) = items.borrow_mut().pop() {
+                                        self.push(popped);
+                                        continue;
+                                    }
+                                }
+
+                                self.push(obj);
+                                self.set_cache(current_ip, MethodCache::EMPTY);
+                            }
+                        },
+
+                        MethodCache::StringUpper => {
+                            if arg_count == 0 {
+                                let obj = self.pop()?;
+
+                                if let Some(s) = obj.as_str() {
+                                    let len = s.len();
+
+                                    // fast path: do sso transformation inline
+                                    if len <= 14 && s.is_ascii() {
+                                        let mut buf = [0u8; 14];
+                                        buf[..len].copy_from_slice(s.as_bytes());
+                                        buf[..len].make_ascii_uppercase();
+                                        self.push(Value::InlineStr(len as u8, buf));
+                                    } else {
+                                        self.push(Value::make_string(&s.to_uppercase()));
+                                    }
+
+                                    continue;
+                                }
+
+                                self.push(obj);
+                                self.set_cache(current_ip, MethodCache::EMPTY);
+                            }
+                        },
+
+                        MethodCache::StringLower => {
+                            if arg_count == 0 {
+                                let obj = self.pop()?;
+
+                                if let Some(s) = obj.as_str() {
+                                    let len = s.len();
+
+                                    // fast path: do sso transformation inline
+                                    if len <= 14 && s.is_ascii() {
+                                        let mut buf = [0u8; 14];
+                                        buf[..len].copy_from_slice(s.as_bytes());
+                                        buf[..len].make_ascii_lowercase();
+                                        self.push(Value::InlineStr(len as u8, buf));
+                                    } else {
+                                        self.push(Value::make_string(&s.to_lowercase()));
+                                    }
+
+                                    continue;
+                                }
+
+                                self.push(obj);
+                                self.set_cache(current_ip, MethodCache::EMPTY);
+                            }
+                        },
+
+                        MethodCache::EMPTY => {}
+                    }
+
                     let method_name = self.read_string(name_idx)?;
 
                     let obj_idx = self.stack.len() - 1 - arg_count; 
@@ -267,7 +317,7 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                         }
                     }
 
-                    self.invoke_method(name_idx, arg_count)?;
+                    self.invoke_method(name_idx, arg_count, current_ip)?;
                 }
 
                 OpCode::GetSubscript => {
@@ -336,15 +386,15 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                         }
 
                         Value::Dict(dict) => {
-                            let key_str = match index_val.as_str() {
-                                Some(s) => s.to_string(),
-                                None => index_val.to_string(),
+                            let dict_key = match DictKey::from_value(&index_val) {
+                                Ok(k) => k,
+                                Err(msg) => return Err(self.error("R002", msg))
                             };
                             
-                            if let Some(val) = dict.borrow().get(&key_str) {
+                            if let Some(val) = dict.borrow().get(&dict_key) {
                                 self.push(val.clone());
                             } else {
-                                return Err(self.error("R003", format!("key '{}' does not exist", key_str)));
+                                return Err(self.error("R003", format!("key '{}' does not exist", dict_key.to_value())));
                             }
                         }
 
@@ -378,11 +428,12 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                         }
                         
                         Value::Dict(dict) => {
-                            let key_str = match index_val.as_str() {
-                                Some(s) => s.to_string(),
-                                None => index_val.to_string(),
+                            let dict_key = match DictKey::from_value(&index_val) {
+                                Ok(k) => k,
+                                Err(msg) => return Err(self.error("R002", msg)),
                             };
-                            dict.borrow_mut().insert(key_str, value);
+
+                            dict.borrow_mut().insert(dict_key, value);
                         }
 
                         _ => return Err(self.error("R002", "object does not support item assignment"))
@@ -440,12 +491,12 @@ pub fn run(&mut self) -> Result<(), VyprError> {
                         let value = self.pop()?;
                         let key = self.pop()?;
 
-                        let key_str = match key.as_str() {
-                            Some(s) => s.to_string(),
-                            None => key.to_string(), 
+                        let dict_key = match DictKey::from_value(&key) {
+                            Ok(k) => k,
+                            Err(msg) => return Err(self.error("R002", msg)),
                         };
 
-                        dict.insert(key_str, value);
+                        dict.insert(dict_key, value);
                     }
 
                     self.push(Value::Dict(Rc::new(RefCell::new(dict))));

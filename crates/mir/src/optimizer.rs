@@ -367,12 +367,17 @@ impl Optimizer {
 
             for block in &function.basic_blocks {
                 for stmt in &block.statements {
-                    if let StatementKind::Assign(place, rval) = &stmt.kind {
-                        Self::count_reads_in_rvalue(rval, &mut read_counts);
-                        for proj in &place.projection {
-                            if let ProjectionElem::Index(idx_local) = proj {
-                                *read_counts.entry(*idx_local).or_insert(0) += 1;
+                    match &stmt.kind {
+                        StatementKind::Assign(place, rval) => {
+                            Self::count_reads_in_rvalue(rval, &mut read_counts);
+                            for proj in &place.projection {
+                                if let ProjectionElem::Index(idx_local) = proj {
+                                    *read_counts.entry(*idx_local).or_insert(0) += 1;
+                                }
                             }
+                        }
+                        StatementKind::DefineGlobal(_, _, rval) | StatementKind::AssignGlobal(_, rval) => {
+                            Self::count_reads_in_rvalue(rval, &mut read_counts);
                         }
                     }
                 }
@@ -410,14 +415,17 @@ impl Optimizer {
                 let original_len = block.statements.len();
                 
                 block.statements.retain(|stmt| {
-                    if let StatementKind::Assign(place, rval) = &stmt.kind {
-                        // ALWAYS keep the return value, subscript assignments, and imports!
-                        if place.local.0 == 0 || !place.projection.is_empty() || matches!(rval, Rvalue::Import(_)) { 
-                            return true; 
+                    match &stmt.kind {
+                        StatementKind::Assign(place, rval) => {
+                            // ALWAYS keep the return value, subscript assignments, and imports!
+                            if place.local.0 == 0 || !place.projection.is_empty() || matches!(rval, Rvalue::Import(_)) { 
+                                return true; 
+                            }
+                            read_counts.get(&place.local).unwrap_or(&0) > &0
                         }
-                        read_counts.get(&place.local).unwrap_or(&0) > &0
-                    } else {
-                        true 
+                        StatementKind::DefineGlobal(_, _, _) | StatementKind::AssignGlobal(_, _) => {
+                            true
+                        }
                     }
                 });
 
@@ -429,6 +437,7 @@ impl Optimizer {
             
             if !loop_changed { break; }
         }
+
         overall_changed
     }
 

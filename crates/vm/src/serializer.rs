@@ -71,7 +71,8 @@ impl Serializer {
             DataType::List     => buf.push(0x07),
             DataType::Range    => buf.push(0x08),
             DataType::Module   => buf.push(0x09),
-            DataType::Dict => buf.push(0x0A),
+            DataType::Dict     => buf.push(0x0A),
+            DataType::File     => buf.push(0x0B),
         }
     }
 
@@ -145,13 +146,17 @@ impl Serializer {
                 self.file.write_all(&len.to_be_bytes())?;
 
                 for (k, v) in borrowed.iter() {
-                    self.write_value(&Value::make_string(k))?;
+                    self.write_value(&k.to_value())?;
                     self.write_value(v)?;
                 }
             }
 
             Value::UnloadedModule(_) | Value::Module(_) => {
                 unreachable!("live modules are never serialized into the constant pool");
+            }
+
+            Value::File(_) => {
+                unreachable!("live file handles are never serialized into the constant pool");
             }
         }
 

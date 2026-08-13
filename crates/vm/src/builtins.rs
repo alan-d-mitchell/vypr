@@ -1,7 +1,7 @@
 use error::error::{Span, VyprError};
 
-use crate::value::Value;
-use std::{cell::RefCell, io::{self, Write}, rc::Rc};
+use crate::value::{SharedFile, Value};
+use std::{cell::RefCell, fs::OpenOptions, io::{self, Write}, rc::Rc};
 
 fn error(code: &'static str, message: impl Into<String>) -> VyprError {
     VyprError::new(code, message, Span::default())
@@ -188,5 +188,48 @@ pub fn vypr_reversed(args: &[Value]) -> Result<Value, VyprError> {
             Ok(Value::List(Rc::new(RefCell::new(items))))
         }
         _ => Err(error("R002", format!("'{}' object is not reversible", args[0].get_type())))
+    }
+}
+
+pub fn vypr_input(args: &[Value]) -> Result<Value, VyprError> {
+    if args.len() > 1 {
+        return Err(error("R014", format!("input() takes at most 1 argument, got {}", args.len())));
+    }
+
+    if args.len() == 1 {
+        let mut stdout = io::stdout().lock();
+        let s = args[0].to_string();
+        let _ = stdout.write_all(s.as_bytes());
+        let _ = stdout.flush();
+    }
+
+    let mut buffer = String::new();
+    match io::stdin().read_line(&mut buffer) {
+        Ok(_) => {
+            let sanitized = buffer.trim_end().to_string();
+            Ok(Value::Str(Rc::new(sanitized)))
+        }
+        Err(e) => Err(error("R015", format!("failed to read input: {}", e)))
+    }
+}
+
+pub fn vypr_open(args: &[Value]) -> Result<Value, VyprError> {
+    if args.is_empty() {
+        return Err(error("R014", format!("open() takes 1 or 2 arguments, got {}", args.len())));
+    }
+
+    let filepath = args[0].to_string();
+    let mode = if args.len() == 2 { args[1].to_string() } else { "r".to_string() };
+
+    let file_result = match mode.as_str() {
+        "r" => OpenOptions::new().read(true).open(&filepath),
+        "w" => OpenOptions::new().write(true).create(true).truncate(true).open(&filepath),
+        "a" => OpenOptions::new().write(true).create(true).append(true).open(&filepath),
+        _ => return Err(error("R015", format!("invalid mode: '{}'", mode))),
+    };
+
+    match file_result {
+        Ok(file) => Ok(Value::File(SharedFile(Rc::new(RefCell::new(file))))),
+        Err(e) => Err(error("R015", format!("failed to open file: {}", e))),
     }
 }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::fs::File;
 
 use error::error::VyprError;
 
@@ -20,6 +21,7 @@ pub enum DataType {
     Function,
     Any,
     Module,
+    File,
 }
 
 impl fmt::Display for DataType {
@@ -36,6 +38,7 @@ impl fmt::Display for DataType {
             DataType::Function => write!(f, "'function'"),
             DataType::Any => write!(f, "any"),
             DataType::Module => write!(f, "'module'"),
+            DataType::File => write!(f, "'file'")
         }
     }
 }
@@ -72,11 +75,53 @@ impl PartialEq for Module {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SharedFile(pub Rc<RefCell<File>>);
+
+impl PartialEq for SharedFile {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DictKey {
+    Int(i64),
+    Float(u64),
+    Bool(bool),
+    Str(Rc<String>),
+    InlineStr(u8, [u8; 14]),
+}
+
+impl DictKey {
+
+    pub fn from_value(val: &Value) -> Result<Self, String> {
+        match val {
+            Value::Int(i) => Ok(DictKey::Int(*i)),
+            Value::Float(f) => Ok(DictKey::Float(f.to_bits())),
+            Value::Bool(b) => Ok(DictKey::Bool(*b)),
+            Value::Str(s) => Ok(DictKey::Str(Rc::clone(s))),
+            Value::InlineStr(len, buf) => Ok(DictKey::InlineStr(*len, *buf)),
+            _ => Err(format!("unhashable type: '{}'", val.get_type())),
+        }
+    }
+
+    pub fn to_value(&self) -> Value {
+        match self {
+            DictKey::Int(i) => Value::Int(*i),
+            DictKey::Float(bits) => Value::Float(f64::from_bits(*bits)),
+            DictKey::Bool(b) => Value::Bool(*b),
+            DictKey::Str(s) => Value::Str(Rc::clone(s)),
+            DictKey::InlineStr(len, buf) => Value::InlineStr(*len, *buf),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VyprFunction {
     pub arity: usize,
     pub upvalues: usize,
-    pub chunk: Chunk
+    pub chunk: Rc<Chunk>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,12 +133,13 @@ pub enum Value {
     Str(Rc<String>),
     InlineStr(u8, [u8; 14]),
     List(Rc<RefCell<Vec<Value>>>),
-    Dict(Rc<RefCell<HashMap<String, Value>>>),
+    Dict(Rc<RefCell<HashMap<DictKey, Value>>>),
     Range(Box<(i64, i64)>),
     Native(Rc<NativeFunction>),
     Function(Rc<VyprFunction>),
     UnloadedModule(Rc<String>),
     Module(Rc<Module>),
+    File(SharedFile),
 }
 
 impl Value {
@@ -136,6 +182,7 @@ impl Value {
             Value::Native(_) | Value::Function(_) => DataType::Function,
             Value::Range(_) => DataType::Range,
             Value::UnloadedModule(_) | Value::Module(_) => DataType::Module,
+            Value::File(_) => DataType::File,
         }
     }
 
@@ -178,7 +225,7 @@ impl Value {
                 let borrowed = dict.borrow();
                 let mut elements = Vec::new();
                 for (k, v) in borrowed.iter() {
-                    elements.push(format!("'{}': {}", k, v.repr_inner(depth + 1)));
+                    elements.push(format!("'{}': {}", k.to_value().repr_inner(depth + 1), v.repr_inner(depth + 1)));
                 }
 
                 format!("{{{}}}", elements.join(", "))
@@ -215,6 +262,7 @@ impl fmt::Display for Value {
             
             Value::Module(m) => write!(f, "<module {}>", m.name),
             Value::UnloadedModule(name) => write!(f, "<unloaded module {}>", name),
+            Value::File(_) => write!(f, "<file>"),
         }
     }
 }

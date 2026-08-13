@@ -12,6 +12,7 @@ impl Analyzer {
         match callee_type {
             TypeExpr::List(inner) => self.check_list_method(&inner, method, args, span),
             TypeExpr::Atomic(TokenType::STR) => self.check_string_method(method, args, span),
+            TypeExpr::Dict(key, value) => self.check_dict_method(&key, &value, method, args, span),
             TypeExpr::Any => Ok(TypeExpr::Any),
 
             t => Err(self.error("S009", format!("type {} has no method '{}'", t, method), span))
@@ -57,7 +58,10 @@ impl Analyzer {
 
                 let value_arg_type = self.infer_type(&args[1])?;
                 if !self.types_match(inner, &value_arg_type) {
-                    return Err(self.error("S007", format!("type error: cannot insert element of type '{}' into list[{}]", value_arg_type, inner), span));
+                    return Err(self.error(
+                        "S007", 
+                        format!("type error: cannot insert element of type '{}' into list[{}]", value_arg_type, inner), span)
+                    );
                 }
 
                 Ok(TypeExpr::Any)
@@ -65,7 +69,9 @@ impl Analyzer {
 
             "pop" => {
                 if args.len() > 1 {
-                    return Err(self.error("S006", format!("pop() takes at most 1 argument, got {}", args.len()), span).with_help("remove extra arguments"));
+                    return Err(self.error("S006", format!("pop() takes at most 1 argument, got {}", args.len()), span)
+                        .with_help("remove extra arguments")
+                    );
                 }
 
                 if args.len() == 1 {
@@ -90,8 +96,8 @@ impl Analyzer {
                 if !self.types_match(inner, &arg_type) {
                     return Err(self.error("S007", format!(
                         "type error: list of type '{}' cannot hold elements of type '{}', therefore the element would not be in the list, thus irremovable", 
-                        inner, arg_type), 
-                    span));
+                        inner, arg_type
+                    ), span));
                 }
 
                 Ok((*inner).clone())
@@ -142,7 +148,10 @@ impl Analyzer {
                 }
 
                 let arg_type = self.infer_type(&args[0])?;
-                let is_iterable = matches!(arg_type, TypeExpr::List(_) | TypeExpr::Atomic(TokenType::RANGE) | TypeExpr::Atomic(TokenType::STR) | TypeExpr::Any);
+                let is_iterable = matches!(arg_type, 
+                    TypeExpr::List(_) | TypeExpr::Atomic(TokenType::RANGE) | 
+                    TypeExpr::Atomic(TokenType::STR) | TypeExpr::Any
+                );
 
                 if !is_iterable {
                     return Err(self.error("S007", format!("type error: join() expects an iterable argument, got {}", arg_type), span));
@@ -180,14 +189,19 @@ impl Analyzer {
 
             "split" => {
                 if args.len() > 2 {
-                    return Err(self.error("S006", format!("split() takes at most 2 arguments, got {}", args.len()), span).with_help("remove extra arguments"));
+                    return Err(self.error("S006", format!("split() takes at most 2 arguments, got {}", args.len()), span)
+                        .with_help("remove extra arguments")
+                    );
                 }
 
-                if args.len() >= 1 {
+                if !args.is_empty() {
                     let sep_type = self.infer_type(&args[0])?;
 
                     if !self.types_match(&TypeExpr::Atomic(TokenType::STR), &sep_type) {
-                        return Err(self.error("S007", format!("type error: 'separator' argument of split() must be a str, got {}", sep_type), span));
+                        return Err(self.error("S007", format!(
+                            "type error: 'separator' argument of split() must be a str, got {}", 
+                            sep_type), span)
+                        );
                     }
                 }
 
@@ -195,7 +209,10 @@ impl Analyzer {
                     let maxsplit_type = self.infer_type(&args[1])?;
 
                     if !self.types_match(&TypeExpr::Atomic(TokenType::INT), &maxsplit_type) {
-                        return Err(self.error("S007", format!("type error: 'maxsplit' argument of split() must be an int, got {}", maxsplit_type), span));
+                        return Err(self.error("S007", format!(
+                            "type error: 'maxsplit' argument of split() must be an int, got {}",
+                            maxsplit_type), span)
+                        );
                     }
                 }
 
@@ -204,7 +221,9 @@ impl Analyzer {
 
             "strip" => {
                 if args.len() > 1 {
-                    return Err(self.error("S006", format!("strip() takes at most 1 argument, got {}", args.len()), span).with_help("remove extra arguments"));
+                    return Err(self.error("S006", format!("strip() takes at most 1 argument, got {}", args.len()), span)
+                        .with_help("remove extra arguments")
+                    );
                 }
 
                 if args.len() == 1 {
@@ -219,6 +238,109 @@ impl Analyzer {
             }
 
             _ => Err(self.error("S009", format!("type 'str' has no method '{}'", method), span))
+        }
+    }
+
+    fn check_dict_method(&mut self, key: &TypeExpr, value: &TypeExpr, method: &str, args: &[Expr], span: Span) 
+        -> Result<TypeExpr, VyprError> 
+    {
+        match method {
+            // removes all elements from the dictionary
+            // takes: no parameters
+            // returns: none
+            "clear" => {
+                if !args.is_empty() {
+                    return Err(self.error("S006", "clear() takes no arguments", span).with_help("remove the arguments"));
+                }
+
+                Ok(TypeExpr::Any)
+            }
+
+            // returns a copy of the dictionary
+            // takes: no parameters
+            "copy" => {
+                if !args.is_empty() {
+                    return Err(self.error("S006", "copy() takes no arguments", span).with_help("remove the arguments"));
+                }
+
+                Ok(TypeExpr::Dict(Box::new((*key).clone()), Box::new((*value).clone())))
+            }
+
+            // returns the value of the specified key
+            // takes:
+            //      keyname: the keyname of the item
+            //      value: optional value to return if key doesnt exist, default None
+            "get" => {
+                if args.is_empty() || args.len() > 2 {
+                    let hint = if args.is_empty() { "add the key argument" } else { "remove extra arguments" };
+                    return Err(self.error("S006", format!("get() takes at most 2 arguments, got {}", args.len()), span).with_help(hint));
+                }
+
+                let key_arg_type = self.infer_type(&args[0])?;
+                if !self.types_match(key, &key_arg_type) {
+                    return Err(self.error("S007", format!("type error: expected key of type {}, got {}", key, key_arg_type), span));
+                }
+
+                if args.len() == 2 {
+                    let default_arg_type = self.infer_type(&args[1])?;
+
+                    if self.types_match(value, &default_arg_type) {
+                        Ok((*value).clone())
+                    } else {
+                        Ok(TypeExpr::Union(Box::new((*value).clone()), Box::new(default_arg_type)))
+                    }
+                } else {
+                    Ok((*value).clone())
+                }
+            }
+
+            // removes and returns the element with the specified key
+            // takes:
+            //      keyname: the keyname of the item to remove
+            //      default: optional value to return if key does not exist
+            //          - if this parameter isnt specified and key does not exist, throw error
+            "pop" => {
+                if args.is_empty() || args.len() > 2 {
+                    let hint = if args.is_empty() { "add the key argument" } else { "remove extra arguments" };
+                    return Err(self.error("S006", format!("pop() takes at most 2 arguments, got {}", args.len()), span).with_help(hint));
+                }
+
+                let key_arg_type = self.infer_type(&args[0])?;
+                if !self.types_match(key, &key_arg_type) {
+                    return Err(self.error("S007", format!("type error: expected key of type {}, got {}", key, key_arg_type), span));
+                }
+
+                if args.len() == 2 {
+                    let default_arg_type = self.infer_type(&args[1])?;
+                    if !self.types_match(value, &default_arg_type) {
+                        return Ok(TypeExpr::Any);
+                    }
+                }
+
+                Ok((*value).clone())
+            }
+
+            // returns a list containing all the keys of the dictionary
+            // takes: no parameters
+            "keys" => {
+                if !args.is_empty() {
+                    return Err(self.error("S006", "keys() takes no arguments", span).with_help("remove the arguments"));
+                }
+
+                Ok(TypeExpr::List(Box::new((*key).clone())))
+            }
+
+            // returns a list containing all the values of the dictionary
+            // takes: no parameters
+            "values" => {
+                if !args.is_empty() {
+                    return Err(self.error("S006", "values() takes no arguments", span).with_help("remove the arguments"));
+                }
+
+                Ok(TypeExpr::List(Box::new((*value).clone())))
+            }
+
+            _ => Err(self.error("S009", format!("type 'dict' has no method '{}'", method), span))
         }
     }
 }

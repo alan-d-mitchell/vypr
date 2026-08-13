@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -14,15 +15,56 @@ pub struct Compiler {
     chunk: Chunk,
     bb_offsets: HashMap<BasicBlockID, usize>,
     forward_jumps: Vec<(usize, BasicBlockID)>,
+    pub globals: Rc<RefCell<HashMap<String, usize>>>,
 }
 
 impl Compiler {
 
     pub fn new() -> Self {
+        let mut globals = HashMap::new();
+        let builtins = [
+            "print", 
+            "int", 
+            "float", 
+            "str", 
+            "len", 
+            "range", 
+            "list", 
+            "reversed", 
+            "input", 
+            "open"
+        ];
+
+        for (i, name) in builtins.iter().enumerate() {
+            globals.insert(name.to_string(), i);
+        }
+
         Self {
             chunk: Chunk::new(),
             bb_offsets: HashMap::new(),
             forward_jumps: Vec::new(),
+            globals: Rc::new(RefCell::new(globals)),
+        }
+    }
+
+    pub fn with_globals(globals: Rc<RefCell<HashMap<String, usize>>>) -> Self {
+        Self {
+            chunk: Chunk::new(),
+            bb_offsets: HashMap::new(),
+            forward_jumps: Vec::new(),
+            globals,
+        }
+    }
+
+    fn resolve_global(&mut self, name: &str) -> usize {
+        let mut map = self.globals.borrow_mut();
+
+        if let Some(&slot) = map.get(name) {
+            slot
+        } else {
+            let slot = map.len();
+            map.insert(name.to_string(), slot);
+            slot
         }
     }
 
@@ -30,28 +72,33 @@ impl Compiler {
         VyprError::new(code, message, span)
     }
 
-    pub fn compile_program(self, mir_program: &MIRProgram) -> Result<Chunk, VyprError> {
+    pub fn compile_program(mut self, mir_program: &MIRProgram) -> Result<Chunk, VyprError> {
         let mut script_chunk = Chunk::new();
 
+        for function in &mir_program.functions {
+            self.resolve_global(&function.name);
+        }
+        self.resolve_global("<script>");
+
         for func in &mir_program.functions {
-            let func_compiler = Compiler::new();
+            let func_compiler = Compiler::with_globals(Rc::clone(&self.globals));
             let func_chunk = func_compiler.compile_function(func)?;
 
             let func_val = Value::Function(Rc::new(VyprFunction { 
                 arity: func.arity, 
                 upvalues: func.locals.len(), 
-                chunk: func_chunk 
+                chunk: Rc::new(func_chunk),
             }));
 
             let func_val_idx = script_chunk.add_constant(func_val);
-            let name_idx = script_chunk.add_constant(Value::make_string(&func.name));
+            let slot = self.resolve_global(&func.name);
 
             script_chunk.write(OpCode::Constant(func_val_idx), Span::default());
-            script_chunk.write(OpCode::DefineGlobal(name_idx, DataType::Function), Span::default());
+            script_chunk.write(OpCode::DefineGlobal(slot, DataType::Function), Span::default());
         }
 
-        let script_name_idx = script_chunk.add_constant(Value::make_string("<script>"));
-        script_chunk.write(OpCode::GetGlobal(script_name_idx), Span::default());
+        let script_slot = self.resolve_global("<script>");
+        script_chunk.write(OpCode::GetGlobal(script_slot), Span::default());
         script_chunk.write(OpCode::Call(0), Span::default());
 
         Ok(script_chunk)
@@ -129,15 +176,15 @@ impl Compiler {
 
             StatementKind::DefineGlobal(name, ty, rval) => {
                 self.compile_rvalue(rval, span)?;
-                let name_idx = self.chunk.add_constant(Value::make_string(name));
+                let slot = self.resolve_global(name);
                 let dtype = self.type_expr_to_datatype(ty);
-                self.chunk.write(OpCode::DefineGlobal(name_idx, dtype), span);
+                self.chunk.write(OpCode::DefineGlobal(slot, dtype), span);
             }
 
             StatementKind::AssignGlobal(name, rval) => {
                 self.compile_rvalue(rval, span)?;
-                let name_idx = self.chunk.add_constant(Value::make_string(name));
-                self.chunk.write(OpCode::SetGlobal(name_idx), span);
+                let slot = self.resolve_global(name);
+                self.chunk.write(OpCode::SetGlobal(slot), span);
             }
         }
 
@@ -205,13 +252,13 @@ impl Compiler {
             }
 
             Rvalue::FunctionDef(function) => {
-                let compiler = Compiler::new();
+                let compiler = Compiler::with_globals(self.globals.clone());
                 let chunk = compiler.compile_function(function)?;
 
                 let val = Value::Function(Rc::new(VyprFunction {
                     arity: function.arity,
                     upvalues: function.locals.len(),
-                    chunk,
+                    chunk: Rc::new(chunk),
                 }));
 
                 let idx = self.chunk.add_constant(val);
@@ -271,8 +318,8 @@ impl Compiler {
                 self.chunk.write(OpCode::Constant(idx), span);
             }
             Operand::Static(name) => {
-                let name_idx = self.chunk.add_constant(Value::make_string(name));
-                self.chunk.write(OpCode::GetGlobal(name_idx), span);
+                let slot = self.resolve_global(name);
+                self.chunk.write(OpCode::GetGlobal(slot), span);
             }
         }
         Ok(())

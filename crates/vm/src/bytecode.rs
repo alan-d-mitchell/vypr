@@ -1,9 +1,12 @@
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
+use std::rc::Rc;
 
 use error::error::Span;
 
 use crate::value::{Value, DataType};
+use crate::vm::MethodCache;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OpCode {
@@ -56,6 +59,7 @@ pub struct Chunk {
     pub code: Vec<OpCode>,
     pub constants: Vec<Value>,
     pub spans: Vec<Span>,
+    pub cache: Rc<RefCell<Vec<MethodCache>>>,
     strings: HashMap<String, usize>,
     ints: HashMap<i64, usize>,
     floats: HashMap<u64, usize>,
@@ -71,6 +75,7 @@ impl Chunk {
             code: Vec::new(),
             constants: Vec::new(),
             spans: Vec::new(),
+            cache: Rc::new(RefCell::new(Vec::new())),
             strings: HashMap::new(),
             ints: HashMap::new(),
             floats: HashMap::new(),
@@ -80,13 +85,17 @@ impl Chunk {
         }
     }
 
+    pub fn init_cache(&mut self) {
+        *self.cache.borrow_mut() = vec![MethodCache::EMPTY; self.code.len()];
+    }
+
     pub fn write(&mut self, op: OpCode, span: Span) {
         self.code.push(op);
         self.spans.push(span);
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
-        // Fast path for both Stack and Heap strings!
+        // fast path for stack and heap strings
         if let Some(s) = value.as_str() {
             if let Some(&idx) = self.strings.get(s) {
                 return idx;
