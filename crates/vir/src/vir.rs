@@ -69,13 +69,14 @@ pub enum VIRExprKind {
     Call {
         callee: VarID,
         args: Vec<VIRExpr>,
-        // kwargs placeholder can go here eventually!
+        kwargs: Vec<(String, VIRExpr)>,
     },
 
     MethodCall {
         object: Box<VIRExpr>,
         method_name: String,
         args: Vec<VIRExpr>,
+        kwargs: Vec<(String, VIRExpr)>,
     },
 
     Binary {

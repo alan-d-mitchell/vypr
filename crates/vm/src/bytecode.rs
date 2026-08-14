@@ -44,8 +44,8 @@ pub enum OpCode {
     BuildDict(usize),
     Length,
 
-    Call(usize),
-    Invoke(usize, usize),   
+    Call(usize, usize),
+    Invoke(usize, usize, usize),   
     FormatString(usize),
     Return,
 
@@ -196,23 +196,27 @@ impl Chunk {
                 }
 
                 OpCode::DefineGlobal(slot, dtype) => {
-                    writeln!(&mut s, "{:<16} g{:4} (type: {:?})", "DEFINE_GLOBAL", slot, dtype).unwrap();
+                    writeln!(&mut s, "{:<16} {:>4} (type: {:?})", "DEFINE_GLOBAL", format!("g{}", slot), dtype).unwrap();
                 }
                 OpCode::GetGlobal(slot) => {
-                    writeln!(&mut s, "{:<16} g{:4}", "GET_GLOBAL", slot).unwrap();
+                    writeln!(&mut s, "{:<16} {:>4}", "GET_GLOBAL", format!("g{}", slot)).unwrap();
                 }
                 OpCode::SetGlobal(slot) => {
-                    writeln!(&mut s, "{:<16} {:4}", "SET_GLOBAL", slot).unwrap();
+                    writeln!(&mut s, "{:<16} {:>4}", "SET_GLOBAL", format!("g{}", slot)).unwrap();
                 }
 
-                OpCode::Invoke(idx, arg_count) => {
+                OpCode::Invoke(idx, arg_count, kwarg_count) => {
                     let name = &self.constants[*idx];
-                    writeln!(&mut s, "{:<16} {:4} '{}' (args: {})", "INVOKE", idx, name, arg_count).unwrap();
+                    writeln!(&mut s, "{:<16} {:4} '{}' (pos: {}, kw: {})", "INVOKE", idx, name, arg_count, kwarg_count).unwrap();
                 }
 
                 OpCode::GetLocal(idx) => writeln!(&mut s, "{:<16} {:4}", "GET_LOCAL", idx).unwrap(),
                 OpCode::SetLocal(idx) => writeln!(&mut s, "{:<16} {:4}", "SET_LOCAL", idx).unwrap(),
-                OpCode::Call(arg_count) => writeln!(&mut s, "{:<16} {:4}", "CALL", arg_count).unwrap(),
+
+                OpCode::Call(arg_count, kwarg_count) => {
+                    writeln!(&mut s, "{:<16} {:>4} {}, kw: {}", "CALL", "pos:", arg_count, kwarg_count).unwrap()
+                }
+
                 OpCode::BuildList(count) => writeln!(&mut s, "{:<16} {:4}", "BUILD_LIST", count).unwrap(),
                 OpCode::ListAppend => writeln!(&mut s, "LIST_APPEND").unwrap(),
 

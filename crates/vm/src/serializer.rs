@@ -200,9 +200,10 @@ impl Serializer {
             OpCode::Greater => buf.push(0x0E),
             OpCode::Not => buf.push(0x0F),
             OpCode::Negate => buf.push(0x10),
-            OpCode::Call(args) => {
+            OpCode::Call(args, kwargs) => {
                 buf.push(0x11);
                 buf.push(*args as u8);
+                buf.push(*kwargs as u8);
             }
             OpCode::Return => buf.push(0x12),
             OpCode::Jump(offset) => {
@@ -228,10 +229,11 @@ impl Serializer {
                 buf.extend_from_slice(&(*count as u32).to_be_bytes());
             }
             OpCode::Length => buf.push(0x1D),
-            OpCode::Invoke(name_idx, args) => {
+            OpCode::Invoke(name_idx, args, kwargs) => {
                 buf.push(0x1E);
                 buf.extend_from_slice(&(*name_idx as u32).to_be_bytes());
                 buf.push(*args as u8);
+                buf.push(*kwargs as u8);
             }
             OpCode::FormatString(count) => {
                 buf.push(0x1F);

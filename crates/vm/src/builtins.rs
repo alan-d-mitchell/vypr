@@ -7,25 +7,45 @@ fn error(code: &'static str, message: impl Into<String>) -> VyprError {
     VyprError::new(code, message, Span::default())
 }
 
-pub fn vypr_print(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_print(args: &[Value], kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     let mut stdout = io::stdout().lock();
+
+    let sep = kwargs.iter()
+        .find(|(k, _)| k == "sep")
+        .and_then(|(_, v)| v.as_str())
+        .unwrap_or(" ");
+
+    let end = kwargs.iter()
+        .find(|(k, _)| k == "end")
+        .and_then(|(_, v)| v.as_str())
+        .unwrap_or("\n");
+
+    let flush = kwargs.iter()
+        .find(|(k, _)| k == "flush")
+        .and_then(|(_, v)| {
+            if let Value::Bool(b) = v { Some(*b) } else { None }
+        })
+        .unwrap_or(false);
 
     for (i, arg) in args.iter().enumerate() {
         let s = arg.to_string();
         let _ = stdout.write_all(s.as_bytes());
 
         if i < args.len() - 1 {
-            let _ = stdout.write_all(b" ");
+            let _ = stdout.write_all(sep.as_bytes());
         }
     }
 
-    let _ = stdout.write_all(b"\n");
-    let _ = stdout.flush();
+    let _ = stdout.write_all(end.as_bytes());
+
+    if flush { 
+        let _ = stdout.flush(); 
+    }
 
     Ok(Value::None)
 }
 
-pub fn vypr_int(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_int(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
         return Ok(Value::Int(0));
     }
@@ -45,7 +65,7 @@ pub fn vypr_int(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-pub fn vypr_float(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_float(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() { 
         return Ok(Value::Float(0.0)); 
     }
@@ -65,7 +85,7 @@ pub fn vypr_float(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-pub fn vypr_str(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_str(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
         return Ok(Value::make_string("")); 
     }
@@ -73,7 +93,7 @@ pub fn vypr_str(args: &[Value]) -> Result<Value, VyprError> {
     Ok(Value::make_string(&args[0].to_string()))
 }
 
-pub fn vypr_len(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_len(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("len() takes exactly 1 argument, got {}", args.len())));
     }
@@ -94,7 +114,7 @@ pub fn vypr_len(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-pub fn vypr_range(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_range(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
         return Err(error("R014", "range expected at least 1 argument, got 0"));
     }
@@ -125,7 +145,7 @@ pub fn vypr_range(args: &[Value]) -> Result<Value, VyprError> {
     Ok(Value::Range(Box::new((start, stop))))
 }
 
-pub fn vypr_list(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_list(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
         return Ok(Value::List(Rc::new(RefCell::new(Vec::new()))));
     }
@@ -157,7 +177,7 @@ pub fn vypr_list(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-pub fn vypr_reversed(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_reversed(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("reversed() takes exactly 1 argument, got {}", args.len())));
     }
@@ -191,7 +211,7 @@ pub fn vypr_reversed(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-pub fn vypr_input(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_input(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() > 1 {
         return Err(error("R014", format!("input() takes at most 1 argument, got {}", args.len())));
     }
@@ -213,7 +233,7 @@ pub fn vypr_input(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-pub fn vypr_open(args: &[Value]) -> Result<Value, VyprError> {
+pub fn vypr_open(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
         return Err(error("R014", format!("open() takes 1 or 2 arguments, got {}", args.len())));
     }
@@ -223,8 +243,8 @@ pub fn vypr_open(args: &[Value]) -> Result<Value, VyprError> {
 
     let file_result = match mode.as_str() {
         "r" => OpenOptions::new().read(true).open(&filepath),
-        "w" => OpenOptions::new().write(true).create(true).truncate(true).open(&filepath),
-        "a" => OpenOptions::new().write(true).create(true).append(true).open(&filepath),
+        "w" => OpenOptions::new().create(true).truncate(true).open(&filepath),
+        "a" => OpenOptions::new().create(true).append(true).open(&filepath),
         _ => return Err(error("R015", format!("invalid mode: '{}'", mode))),
     };
 

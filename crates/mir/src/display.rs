@@ -67,22 +67,45 @@ impl fmt::Display for Terminator {
             Terminator::SwitchInt { discriminant, true_target, false_target } => {
                 write!(f, "switch_int({}) -> [true: bb{}, false: bb{}];", discriminant, true_target.0, false_target.0)
             }
-            Terminator::Call { callee, args, destination, target } => {
+
+            Terminator::Call { callee, args, kwargs, destination, target } => {
                 write!(f, "{} = call {}(", destination, callee)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+
+                let mut first = true;
+                for arg in args {
+                    if !first { write!(f, ", ")?; }
                     write!(f, "{}", arg)?;
+                    first = false;
                 }
+
+                for (name, arg) in kwargs {
+                    if !first { write!(f, ", ")?; }
+                    write!(f, "{}={}", name, arg)?;
+                    first = false;
+                }
+
                 write!(f, ") -> bb{};", target.0)
             }
-            Terminator::MethodCall { object, method_name, args, destination, target } => {
+
+            Terminator::MethodCall { object, method_name, args, kwargs, destination, target } => {
                 write!(f, "{} = call {}.{}(", destination, object, method_name)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+
+                let mut first = true;
+                for arg in args {
+                    if !first { write!(f, ", ")?; }
                     write!(f, "{}", arg)?;
+                    first = false;
                 }
+
+                for (name, arg) in kwargs {
+                    if !first { write!(f, ", ")?; }
+                    write!(f, "{}={}", name, arg)?;
+                    first = false;
+                }
+
                 write!(f, ") -> bb{};", target.0)
             }
+
             Terminator::Return => write!(f, "return;"),
             Terminator::Unreachable => write!(f, "unreachable;"),
         }

@@ -108,7 +108,8 @@ pub enum ExprKind {
 
     Call {
         callee: Box<Expr>,
-        args: Vec<Expr>
+        args: Vec<Expr>,
+        kwargs: Vec<(String, Expr)>,
     },
 
     Subscript {
@@ -135,6 +136,7 @@ pub enum ExprKind {
     MethodCall {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        kwargs: Vec<(String, Expr)>,
         method: String,
     },
 

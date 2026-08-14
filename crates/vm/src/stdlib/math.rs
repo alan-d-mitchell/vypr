@@ -98,7 +98,7 @@ pub fn create_module() -> Value {
     }))
 }
 
-fn math_sin(args: &[Value]) -> Result<Value, VyprError> {
+fn math_sin(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("sin() takes exactly 1 argument, got {}", args.len())));
     }
@@ -111,7 +111,7 @@ fn math_sin(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_asin(args: &[Value]) -> Result<Value, VyprError> {
+fn math_asin(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("asin() takes exactly 1 argument, got {}", args.len())));
     }
@@ -124,7 +124,7 @@ fn math_asin(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_cos(args: &[Value]) -> Result<Value, VyprError> {
+fn math_cos(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("cos() takes exactly 1 argument, got {}", args.len())));
     }
@@ -137,7 +137,7 @@ fn math_cos(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_acos(args: &[Value]) -> Result<Value, VyprError> {
+fn math_acos(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("acos() takes exactly 1 argument, got {}", args.len())));
     }
@@ -150,7 +150,7 @@ fn math_acos(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_tan(args: &[Value]) -> Result<Value, VyprError> {
+fn math_tan(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("tan() takes exactly 1 argument, got {}", args.len())));
     }
@@ -163,7 +163,7 @@ fn math_tan(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_atan(args: &[Value]) -> Result<Value, VyprError> {
+fn math_atan(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("atan() takes exactly 1 argument, got {}", args.len())));
     }
@@ -176,7 +176,7 @@ fn math_atan(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_degrees(args: &[Value]) -> Result<Value, VyprError> {
+fn math_degrees(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("degrees() takes exactly 1 argument, got {}", args.len())));
     }
@@ -189,7 +189,7 @@ fn math_degrees(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_radians(args: &[Value]) -> Result<Value, VyprError> {
+fn math_radians(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("radians() takes exactly 1 argument, got {}", args.len())));
     }
@@ -202,7 +202,7 @@ fn math_radians(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_exp(args: &[Value]) -> Result<Value, VyprError> {
+fn math_exp(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("exp() takes exactly 1 argument, got {}", args.len())));
     }
@@ -215,7 +215,7 @@ fn math_exp(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_ln(args: &[Value]) -> Result<Value, VyprError> {
+fn math_ln(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("ln() takes exactly 1 argument, got {}", args.len())));
     }
@@ -228,7 +228,7 @@ fn math_ln(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_log(args: &[Value]) -> Result<Value, VyprError> {
+fn math_log(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("log() takes exactly 1 argument, got {}", args.len())));
     }
@@ -241,7 +241,7 @@ fn math_log(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_floor(args: &[Value]) -> Result<Value, VyprError> {
+fn math_floor(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("floor() takes exactly 1 argument, got {}", args.len())));
     }
@@ -254,7 +254,7 @@ fn math_floor(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_ceil(args: &[Value]) -> Result<Value, VyprError> {
+fn math_ceil(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("ceil() takes exactly 1 argument, got {}", args.len())));
     }
@@ -267,7 +267,7 @@ fn math_ceil(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_sqrt(args: &[Value]) -> Result<Value, VyprError> {
+fn math_sqrt(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("sqrt() takes exactly 1 argument, got {}", args.len())));
     }
@@ -280,7 +280,7 @@ fn math_sqrt(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn math_abs(args: &[Value]) -> Result<Value, VyprError> {
+fn math_abs(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("abs() takes exactly 1 argument got {}", args.len())));
     }

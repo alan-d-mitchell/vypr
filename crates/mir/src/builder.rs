@@ -340,7 +340,7 @@ impl MIRBuilder {
             }
 
             // --- 5. Calls & Dynamic Dispatch ---
-            VIRExprKind::Call { callee, args } => {
+            VIRExprKind::Call { callee, args, kwargs } => {
                 let callee_op = if let Some(&local) = self.var_map.get(&callee.0) {
                     Operand::Copy(Place { local, projection: vec![] })
                 } else {
@@ -352,6 +352,11 @@ impl MIRBuilder {
                     arg_ops.push(self.lower_expr(arg));
                 }
 
+                let mut kwarg_ops = Vec::new();
+                for (name, arg) in kwargs {
+                    kwarg_ops.push((name.clone(), self.lower_expr(arg)));
+                }
+
                 let result_local = self.new_local(TypeExpr::Any, None);
                 let destination = Place { local: result_local, projection: vec![] };
                 let next_block = self.new_block();
@@ -360,6 +365,7 @@ impl MIRBuilder {
                 self.terminate_block(Terminator::Call {
                     callee: callee_op,
                     args: arg_ops,
+                    kwargs: kwarg_ops,
                     destination: destination.clone(),
                     target: next_block,
                 });
@@ -368,12 +374,17 @@ impl MIRBuilder {
                 Operand::Copy(destination)
             }
 
-            VIRExprKind::MethodCall { object, method_name, args } => {
+            VIRExprKind::MethodCall { object, method_name, args, kwargs } => {
                 let obj_op = self.lower_expr(object);
 
                 let mut arg_ops = Vec::new();
                 for arg in args {
                     arg_ops.push(self.lower_expr(arg));
+                }
+
+                let mut kwarg_ops = Vec::new();
+                for (name, arg) in kwargs {
+                    kwarg_ops.push((name.clone(), self.lower_expr(arg)));
                 }
 
                 let result_local = self.new_local(TypeExpr::Any, None);
@@ -384,6 +395,7 @@ impl MIRBuilder {
                     object: obj_op,
                     method_name: method_name.clone(),
                     args: arg_ops,
+                    kwargs: kwarg_ops,
                     destination: destination.clone(),
                     target: next_block,
                 });

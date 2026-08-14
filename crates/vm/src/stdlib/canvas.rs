@@ -48,7 +48,7 @@ pub fn create_module() -> Value {
     }))
 }
 
-fn canvas_init(args: &[Value]) -> Result<Value, VyprError> {
+fn canvas_init(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 2 {
         return Err(error("R014", format!("init() takes exactly 2 arguments, got {}", args.len())));
     }
@@ -69,7 +69,7 @@ fn canvas_init(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn canvas_set_pixel(args: &[Value]) -> Result<Value, VyprError> {
+fn canvas_set_pixel(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 5 {
         return Err(error("R014", format!("set_pixel() takes exactly 5 arguments, got {}", args.len())));
     }
@@ -105,7 +105,7 @@ fn canvas_set_pixel(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn canvas_save(args: &[Value]) -> Result<Value, VyprError> {
+fn canvas_save(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("save() takes exactly 1 argument, got {}", args.len())));
     }
@@ -136,7 +136,7 @@ fn canvas_save(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn canvas_draw_rect(args: &[Value]) -> Result<Value, VyprError> {
+fn canvas_draw_rect(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 7 {
         return Err(error("R014", format!("draw_rect() takes exactly 7 arguments, got {}", args.len())));
     }
@@ -178,7 +178,7 @@ fn canvas_draw_rect(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn canvas_draw_circle(args: &[Value]) -> Result<Value, VyprError> {
+fn canvas_draw_circle(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 6 {
         return Err(error("R014", format!("draw_circle() takes exactly 6 arguments, got {}", args.len())));
     }

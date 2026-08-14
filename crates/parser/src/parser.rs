@@ -657,6 +657,44 @@ impl<'p> Parser<'p> {
         Ok(expr)
     }
 
+    fn arguments(&mut self) -> Result<(Vec<Expr>, Vec<(String, Expr)>), VyprError> {
+        let mut args = Vec::new();
+        let mut kwargs = Vec::new();
+
+        if !self.check(TokenType::RPAREN) {
+            loop {
+                let is_kwarg = if let TokenType::IDENTIFIER(_) = self.peek().kind {
+                    self.current + 1 < self.tokens.len() && 
+                    matches!(self.tokens[self.current + 1].kind, TokenType::EQUAL)
+                } else {
+                    false
+                };
+
+                if is_kwarg {
+                    let name = match self.advance().kind {
+                        TokenType::IDENTIFIER(n) => n,
+                        _ => unreachable!()
+                    };
+
+                    self.advance();
+                    let value = self.expression()?;
+                    kwargs.push((name, value));
+                } else {
+                    if !kwargs.is_empty() {
+                        return Err(self.make_error("P022", "positional argument follows keyword argument"));
+                    }
+                    args.push(self.expression()?);
+                }
+
+                if !self.match_token(TokenType::COMMA) {
+                    break;
+                }
+            }
+        }
+
+        Ok((args, kwargs))
+    }
+
     pub fn expression(&mut self) -> Result<Expr, VyprError> {
         self.assignment()
     }
@@ -884,21 +922,11 @@ impl<'p> Parser<'p> {
 
     fn finish_call(&mut self, callee: Expr) -> Result<Expr, VyprError> {
         let span = callee.span;
-        let mut args = Vec::new();
-
-        if !self.check(TokenType::RPAREN) {
-            loop {
-                args.push(self.expression()?);
-
-                if !self.match_token(TokenType::COMMA) {
-                    break;
-                }
-            }
-        }
+        let (args, kwargs) = self.arguments()?;
 
         self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
 
-        Ok(Expr { kind: ExprKind::Call { callee: Box::new(callee), args }, span })
+        Ok(Expr { kind: ExprKind::Call { callee: Box::new(callee), args, kwargs }, span })
     }
 
     fn finish_method_call(&mut self, callee: Expr) -> Result<Expr, VyprError> {
@@ -911,19 +939,11 @@ impl<'p> Parser<'p> {
 
         self.consume(TokenType::LPAREN, "expected '(' after method name")?;
 
-        let mut args = Vec::new();
-        if !self.check(TokenType::RPAREN) {
-            loop {
-                args.push(self.expression()?); // Parse each argument
-                if !self.match_token(TokenType::COMMA) { 
-                    break; 
-                }
-            }
-        }
+        let (args, kwargs) = self.arguments()?;
 
         self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
 
-        Ok(Expr { kind: ExprKind::MethodCall { callee: Box::new(callee), method: method_name, args }, span })
+        Ok(Expr { kind: ExprKind::MethodCall { callee: Box::new(callee), method: method_name, args, kwargs }, span })
     }
 
     fn finish_subscript(&mut self, callee: Expr) -> Result<Expr, VyprError> {

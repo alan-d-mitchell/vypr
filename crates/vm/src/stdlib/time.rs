@@ -27,7 +27,7 @@ pub fn create_module() -> Value {
 }
 
 // Returns the current Unix timestamp as a float
-fn time_func(args: &[Value]) -> Result<Value, VyprError> {
+fn time_func(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if !args.is_empty() {
         return Err(error("R014", format!("time() takes no arguments, got{}", args.len())));
     }
@@ -39,7 +39,7 @@ fn time_func(args: &[Value]) -> Result<Value, VyprError> {
 }
 
 // Pauses the VM thread
-fn sleep_func(args: &[Value]) -> Result<Value, VyprError> {
+fn sleep_func(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("sleep() takes exactly 1 argument ({} given)", args.len())));
     }

@@ -296,7 +296,7 @@ impl Analyzer {
                 }
             },
 
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, kwargs } => {
                 if let ExprKind::Variable(func_name) = &callee.kind {
                     let signature = self.resolve(func_name).and_then(|sym| {
                         if let SymbolType::Function { params, return_type } = &sym.kind {
@@ -330,6 +330,10 @@ impl Analyzer {
                             }
                         }
 
+                        for (_, kwarg_expr) in kwargs {
+                            self.infer_type(kwarg_expr)?;
+                        }
+
                         return Ok(return_type);
                     }
                 }
@@ -340,6 +344,11 @@ impl Analyzer {
                     for arg in args {
                         self.infer_type(arg)?;
                     }
+
+                    for (_, kwarg_expr) in kwargs {
+                        self.infer_type(kwarg_expr)?;
+                    }
+
                     return Ok(TypeExpr::Any);
                 }
 
@@ -359,7 +368,11 @@ impl Analyzer {
 
             // eventually need to migrate this match arm to a separate file called "methods.rs"
             // that will just house all the built in methods i choose to implement for the primitive types
-            ExprKind::MethodCall { callee, args, method } => {
+            ExprKind::MethodCall { callee, args, kwargs, method } => {
+                for (_, kwarg_expr) in kwargs {
+                    self.infer_type(kwarg_expr)?;
+                }
+
                 self.method_call(callee, args, method.as_str(), span)
             },
 

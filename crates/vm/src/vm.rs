@@ -185,11 +185,32 @@ impl VM {
                     self.stack[index] = val; 
                 }
 
-                OpCode::Call(arg_count) => {
-                    self.call_value(arg_count)?;
+                OpCode::Call(arg_count, kwarg_count) => {
+                    let mut kwargs = Vec::new();
+
+                    for _ in 0..kwarg_count {
+                        let value = self.pop()?;
+                        let key_val = self.pop()?;
+                        let key = key_val.as_str().unwrap().to_string();
+                        kwargs.push((key, value));
+                    }
+
+                    let callee = self.stack[self.stack.len() - 1 - arg_count].clone();
+
+                    self.call_value(callee, arg_count, kwargs)?
                 }
 
-                OpCode::Invoke(name_idx, arg_count) => {
+                OpCode::Invoke(name_idx, arg_count, kwarg_count) => {
+                    let _method_name = self.read_string(name_idx);
+                    
+                    let mut kwargs = Vec::new();
+                    for _ in 0..kwarg_count {
+                        let value = self.pop()?;
+                        let key_val = self.pop()?;
+                        let key = key_val.as_str().unwrap().to_string();
+                        kwargs.push((key, value));
+                    }
+
                     let current_ip = self.current_frame().ip - 1;
 
                     let cached_type = {
@@ -305,7 +326,7 @@ impl VM {
 
                                 self.pop()?; 
 
-                                let result = (native.function)(&args)?;
+                                let result = (native.function)(&args, &[])?;
                                 self.push(result);
 
                                 continue;
@@ -858,7 +879,7 @@ impl VM {
         self.frames.last_mut().expect("call stack empty")
     }
 
-    fn call_value(&mut self, arg_count: usize) -> Result<(), VyprError> {
+    fn call_value(&mut self, callee: Value, arg_count: usize, kwargs: Vec<(String, Value)>) -> Result<(), VyprError> {
         if self.frames.len() >= 1000 {
             return Err(self.error("R006", "maximum recursion depth exceeded"));
         }
@@ -870,7 +891,7 @@ impl VM {
 
         match callee {
             Value::Native(native) => {
-                let mut args = Vec::new();
+                let mut args = Vec::with_capacity(arg_count);
 
                 for _ in 0..arg_count {
                     args.push(self.pop()?);
@@ -879,13 +900,17 @@ impl VM {
 
                 self.pop()?;
 
-                let result = (native.function)(&args)?;
+                let result = (native.function)(&args, &kwargs)?;
                 self.push(result);
 
                 Ok(())
             }
 
             Value::Function(function) => {
+                if !kwargs.is_empty() {
+                    return Err(self.error("R010", "custom kwargs are not yet supported"))
+                }
+
                 if arg_count != function.arity {
                     return Err(self.error("R008", format!(
                         "function expected {} arguments but got {}", 

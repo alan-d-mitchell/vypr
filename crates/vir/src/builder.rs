@@ -1,4 +1,3 @@
-use core::fmt;
 use std::collections::HashMap;
 
 use crate::context::{VIRContext, VarID, SymbolInfo, SymbolKind};
@@ -232,6 +231,7 @@ impl VIRBuilder {
                     kind: VIRExprKind::Call {
                         callee: self.resolve_var("len").unwrap_or(VarID(0, "len".to_string())),
                         args: vec![VIRExpr { kind: VIRExprKind::VarRef(iter_id.clone()), ty: TypeExpr::Any, span: stmt.span }],
+                        kwargs: vec![],
                     },
                     ty: TypeExpr::Atomic(TokenType::INT),
                     span: stmt.span,
@@ -325,7 +325,14 @@ impl VIRBuilder {
 
             StmtKind::Break => VIRStmt::Expr(VIRExpr { kind: VIRExprKind::Break, ty: TypeExpr::Any, span: stmt.span }),
             StmtKind::Continue => VIRStmt::Expr(VIRExpr { kind: VIRExprKind::Continue, ty: TypeExpr::Any, span: stmt.span }),
-            StmtKind::Pass => VIRStmt::Expr(VIRExpr { kind: VIRExprKind::Block(VIRBlock { stmts: vec![], span: stmt.span }), ty: TypeExpr::Any, span: stmt.span }),
+            StmtKind::Pass => VIRStmt::Expr(VIRExpr { 
+                kind: VIRExprKind::Block(VIRBlock { 
+                    stmts: vec![], 
+                    span: stmt.span 
+                }), 
+                ty: TypeExpr::Any, 
+                span: stmt.span 
+            }),
 
             StmtKind::Import { module } => {
                 let var_id = self.define_var(module.clone(), TypeExpr::Any);
@@ -405,11 +412,13 @@ impl VIRBuilder {
                 VIRExprKind::Unary { op, operand: Box::new(self.lower_expr(right)) }
             }
 
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, kwargs } => {
                 if let ExprKind::Variable(name) = &callee.kind {
                     let var_id = self.resolve_var(name).expect("Function not found");
                     let lowered_args = args.iter().map(|a| self.lower_expr(a)).collect();
-                    VIRExprKind::Call { callee: var_id, args: lowered_args }
+                    let lowered_kwargs = kwargs.iter().map(|(k, v)| (k.clone(), self.lower_expr(v))).collect();
+
+                    VIRExprKind::Call { callee: var_id, args: lowered_args, kwargs: lowered_kwargs }
                 } else {
                     panic!("[ICE] complex dynamic dispatch calls not yet supported in VIR")
                 }
@@ -422,9 +431,16 @@ impl VIRBuilder {
                 }
             }
 
-            ExprKind::MethodCall { callee, method, args } => {
+            ExprKind::MethodCall { callee, method, args, kwargs } => {
                 let lowered_args = args.iter().map(|a| self.lower_expr(a)).collect();
-                VIRExprKind::MethodCall { object: Box::new(self.lower_expr(callee)), method_name: method.clone(), args: lowered_args }
+                let lowered_kwargs = kwargs.iter().map(|(k, v)| (k.clone(), self.lower_expr(v))).collect();
+
+                VIRExprKind::MethodCall { 
+                    object: Box::new(self.lower_expr(callee)), 
+                    method_name: method.clone(), 
+                    args: lowered_args,
+                    kwargs: lowered_kwargs,
+                }
             }
 
             ExprKind::Subscript { callee, index } => {

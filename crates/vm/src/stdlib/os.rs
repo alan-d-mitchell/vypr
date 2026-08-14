@@ -26,7 +26,7 @@ pub fn create_module() -> Value {
     }))
 }
 
-fn os_getenv(args: &[Value]) -> Result<Value, VyprError> {
+fn os_getenv(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("getenv() takes exactly 1 argument, got {}", args.len())));
     }
@@ -41,7 +41,7 @@ fn os_getenv(args: &[Value]) -> Result<Value, VyprError> {
     }
 }
 
-fn os_exit(args: &[Value]) -> Result<Value, VyprError> {
+fn os_exit(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() > 1 {
         return Err(error("R014", format!("exit() takes at most 1 argument, got {}", args.len())));
     }

@@ -43,7 +43,7 @@ impl fmt::Display for DataType {
     }
 }
 
-pub type NativeFn = fn(&[Value]) -> Result<Value, VyprError>;
+pub type NativeFn = fn(&[Value], &[(String, Value)]) -> Result<Value, VyprError>;
 
 #[derive(Clone)]
 pub struct NativeFunction {

@@ -99,7 +99,7 @@ impl Compiler {
 
         let script_slot = self.resolve_global("<script>");
         script_chunk.write(OpCode::GetGlobal(script_slot), Span::default());
-        script_chunk.write(OpCode::Call(0), Span::default());
+        script_chunk.write(OpCode::Call(0, 0), Span::default());
 
         Ok(script_chunk)
     }
@@ -340,29 +340,47 @@ impl Compiler {
 
                 self.emit_jump_or_loop(*true_target, current_bb, OpCode::Jump, span);
             }
-            Terminator::Call { callee, args, destination, target } => {
+
+            Terminator::Call { callee, args, kwargs, destination, target } => {
                 self.compile_operand(callee, span)?;
+
                 for arg in args {
                     self.compile_operand(arg, span)?;
                 }
-                
-                self.chunk.write(OpCode::Call(args.len()), span);
+
+                for (name, arg) in kwargs {
+                    let name_idx = self.chunk.add_constant(Value::make_string(name));
+                    self.chunk.write(OpCode::Constant(name_idx), span);
+                    self.compile_operand(arg, span)?;
+                }
+
+                self.chunk.write(OpCode::Call(args.len(), kwargs.len()), span);
                 self.chunk.write(OpCode::SetLocal(destination.local.0), span);
 
                 self.emit_jump_or_loop(*target, current_bb, OpCode::Jump, span);
             }
-            Terminator::MethodCall { object, method_name, args, destination, target } => {
+
+            Terminator::MethodCall { object, method_name, args, kwargs, destination, target } => {
                 self.compile_operand(object, span)?;
+
                 for arg in args {
                     self.compile_operand(arg, span)?;
                 }
-                
+
+                for (name, arg) in kwargs {
+                    let kw_name_idx = self.chunk.add_constant(Value::make_string(name));
+                    self.chunk.write(OpCode::Constant(kw_name_idx), span);
+                    self.compile_operand(arg, span)?;
+                }
+
                 let name_idx = self.chunk.add_constant(Value::make_string(method_name));
-                self.chunk.write(OpCode::Invoke(name_idx, args.len()), span);
+
+                self.chunk.write(OpCode::Invoke(name_idx, args.len(), kwargs.len()), span);
                 self.chunk.write(OpCode::SetLocal(destination.local.0), span);
 
                 self.emit_jump_or_loop(*target, current_bb, OpCode::Jump, span);
             }
+
             Terminator::Return => {
                 self.chunk.write(OpCode::GetLocal(0), span);
                 self.chunk.write(OpCode::Return, span);

@@ -30,7 +30,7 @@ pub fn create_module() -> Value {
     }))
 }
 
-fn random(args: &[Value]) -> Result<Value, VyprError> {
+fn random(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if !args.is_empty() {
         return Err(error("R014", format!("random() takes no arguments, got {}", args.len())));
     }
@@ -41,7 +41,7 @@ fn random(args: &[Value]) -> Result<Value, VyprError> {
     Ok(Value::Float(result))
 }
 
-fn rand_range(args: &[Value]) -> Result<Value, VyprError> {
+fn rand_range(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 2 {
         return Err(error("R014", format!("randrange() takes exactly 2 arguments, got {}", args.len())));
     }
@@ -66,7 +66,7 @@ fn rand_range(args: &[Value]) -> Result<Value, VyprError> {
     Ok(Value::Int(result))
 }
 
-fn rand_int(args: &[Value]) -> Result<Value, VyprError> {
+fn rand_int(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 2 {
         return Err(error("R014", format!("randint() takes exactly 2 arguments, got {}", args.len())));
     }
@@ -78,5 +78,5 @@ fn rand_int(args: &[Value]) -> Result<Value, VyprError> {
 
     let new_args = [args[0].clone(), stop_plus_one];
 
-    rand_range(&new_args)
+    rand_range(&new_args, &[])
 }

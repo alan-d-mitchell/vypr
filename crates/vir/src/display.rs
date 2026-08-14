@@ -92,21 +92,41 @@ impl fmt::Display for VIRExprKind {
             VIRExprKind::SubscriptAccess { base, index } => write!(f, "{}[{}]", base, index),
             VIRExprKind::PropertyAccess { object, property } => write!(f, "{}.{}", object, property),
             
-            VIRExprKind::Call { callee, args } => {
+            VIRExprKind::Call { callee, args, kwargs } => {
                 write!(f, "{}(", callee)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                let mut first = true;
+
+                for arg in args {
+                    if !first { write!(f, ", ")?; }
                     write!(f, "{}", arg)?;
+                    first = false;
                 }
+
+                for (name, arg) in kwargs {
+                    if !first { write!(f, ", ")?; }
+                    write!(f, "{}={}", name, arg)?;
+                    first = false;
+                }
+
                 write!(f, ")")
             }
 
-            VIRExprKind::MethodCall { object, method_name, args } => {
+            VIRExprKind::MethodCall { object, method_name, args, kwargs } => {
                 write!(f, "{}.{}(", object, method_name)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                let mut first = true;
+
+                for arg in args {
+                    if !first { write!(f, ", ")?; }
                     write!(f, "{}", arg)?;
+                    first = false;
                 }
+
+                for (name, arg) in kwargs {
+                    if !first { write!(f, ", ")?; }
+                    write!(f, "{}={}", name, arg)?;
+                    first = false;
+                }
+
                 write!(f, ")")
             }
             

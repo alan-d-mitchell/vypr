@@ -91,6 +91,7 @@ pub enum Terminator {
     Call {
         callee: Operand, // Could be a static function ID or a dynamic variable!
         args: Vec<Operand>,
+        kwargs: Vec<(String, Operand)>,
         destination: Place,
         target: BasicBlockID,
     },
@@ -98,6 +99,7 @@ pub enum Terminator {
         object: Operand,
         method_name: String,
         args: Vec<Operand>,
+        kwargs: Vec<(String, Operand)>,
         destination: Place,
         target: BasicBlockID,
     },
