@@ -51,6 +51,7 @@ pub enum StatementKind {
     Assign(Place, Rvalue),
     AssignGlobal(String, Rvalue),
     DefineGlobal(String, TypeExpr, Rvalue),
+    AssertType(Operand, TypeExpr),
 }
 
 #[derive(Debug, Clone)]

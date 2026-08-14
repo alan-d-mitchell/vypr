@@ -56,6 +56,7 @@ impl fmt::Display for Statement {
             StatementKind::Assign(place, rval) => write!(f, "{} = {};", place, rval),
             StatementKind::AssignGlobal(name, rval) => write!(f, "global::{} = {};", name, rval),
             StatementKind::DefineGlobal(name, ty, rval) => write!(f, "global::{} : {} = {};", name, ty, rval),
+            StatementKind::AssertType(op, ty) => write!(f, "assert_type {} == {}", op, ty),
         }
     }
 }

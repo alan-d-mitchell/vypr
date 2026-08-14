@@ -138,12 +138,6 @@ impl Compiler {
             StatementKind::Assign(place, rval) => {
                 self.compile_rvalue(rval, span)?;
 
-                let local_decl = &locals[place.local.0];
-                let data_type = self.type_expr_to_datatype(&local_decl.ty);
-                if data_type != DataType::Any {
-                    self.chunk.write(OpCode::ASSERT_TYPE(data_type), span);
-                }
-
                 if place.projection.is_empty() {
                     self.chunk.write(OpCode::SetLocal(place.local.0), span);
                 } else {
@@ -185,6 +179,15 @@ impl Compiler {
                 self.compile_rvalue(rval, span)?;
                 let slot = self.resolve_global(name);
                 self.chunk.write(OpCode::SetGlobal(slot), span);
+            }
+
+            StatementKind::AssertType(operand, ty) => {
+                let data_type = self.type_expr_to_datatype(ty);
+                if data_type != DataType::Any {
+                    self.compile_operand(operand, span)?;
+                    self.chunk.write(OpCode::ASSERT_TYPE(data_type), span);
+                    self.chunk.write(OpCode::Pop, span);
+                }
             }
         }
 

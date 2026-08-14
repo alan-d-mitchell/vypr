@@ -379,6 +379,10 @@ impl Optimizer {
                         StatementKind::DefineGlobal(_, _, rval) | StatementKind::AssignGlobal(_, rval) => {
                             Self::count_reads_in_rvalue(rval, &mut read_counts);
                         }
+
+                        StatementKind::AssertType(op, _) => {
+                            Self::count_reads(op, &mut read_counts);
+                        }
                     }
                 }
 
@@ -423,7 +427,12 @@ impl Optimizer {
                             }
                             read_counts.get(&place.local).unwrap_or(&0) > &0
                         }
+
                         StatementKind::DefineGlobal(_, _, _) | StatementKind::AssignGlobal(_, _) => {
+                            true
+                        }
+
+                        StatementKind::AssertType(_, _) => {
                             true
                         }
                     }

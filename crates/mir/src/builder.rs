@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::mir::*;
+use error::error::Span;
 use lexer::token::TokenType;
 use vir::vir::{VIRFunction, VIRBlock, VIRStmt, VIRExpr, VIRExprKind, VIRBinOp};
 use parser::ast::TypeExpr;
@@ -56,21 +57,28 @@ impl MIRBuilder {
 
     // --- ENTRY POINT ---
     pub fn build_function(mut self, vir_fn: VIRFunction) -> MIRFunction {
-        // _0 is ALWAYS the return value in MIR
         self.new_local(vir_fn.return_type.clone(), Some("return_val".to_string()));
-
-        // _1 to _N are the function parameters
-        for (var_id, ty) in &vir_fn.params {
-            let local_id = self.new_local(ty.clone(), Some(var_id.1.clone()));
-            self.var_map.insert(var_id.0, local_id);
-        }
 
         let entry_block = self.new_block();
         self.current_block = entry_block;
 
+        for (var_id, ty) in &vir_fn.params {
+            let local_id = self.new_local(ty.clone(), Some(var_id.1.clone()));
+            self.var_map.insert(var_id.0, local_id);
+
+            if *ty != TypeExpr::Any {
+                self.push_statement(Statement {
+                    kind: StatementKind::AssertType(
+                        Operand::Copy(Place { local: local_id, projection: vec![] }),
+                        ty.clone(),
+                    ),
+                    span: Default::default(),
+                });
+            }
+        }
+
         self.lower_block(&vir_fn.body);
 
-        // Implicit return if the block didn't hit a `return` statement
         if matches!(self.basic_blocks[self.current_block.0].terminator, Terminator::Unreachable) {
             self.terminate_block(Terminator::Return);
         }
@@ -96,6 +104,8 @@ impl MIRBuilder {
                 if self.is_script {
                     if let Some(expr) = init {
                         let rval = self.lower_expr(expr);
+                        self.emit_type_assertion(&rval, ty, &expr.ty, *span);
+                        
                         self.push_statement(Statement {
                             kind: StatementKind::DefineGlobal(var_id.1.clone(), ty.clone(), Rvalue::Use(rval)),
                             span: *span,
@@ -106,6 +116,8 @@ impl MIRBuilder {
                     self.var_map.insert(var_id.0, local_id);
                     if let Some(expr) = init {
                         let rval = self.lower_expr(expr);
+                        self.emit_type_assertion(&rval, ty, &expr.ty, *span);
+                        
                         self.push_statement(Statement {
                             kind: StatementKind::Assign(Place { local: local_id, projection: vec![] }, Rvalue::Use(rval)),
                             span: *span,
@@ -143,9 +155,12 @@ impl MIRBuilder {
                 let rval = self.lower_expr(value);
 
                 match &target.kind {
+
                     VIRExprKind::VarRef(var_id) => {
                         if let Some(local_id) = self.var_map.get(&var_id.0) {
                             let place = Place { local: *local_id, projection: vec![] };
+
+                            self.emit_type_assertion(&rval, &target.ty, &value.ty, expr.span);
 
                             self.push_statement(Statement {
                                 kind: StatementKind::Assign(place.clone(), Rvalue::Use(rval)),
@@ -156,6 +171,8 @@ impl MIRBuilder {
                         } else {
                             let temp = self.new_local(TypeExpr::Any, None);
                             let temp_place = Place { local: temp, projection: vec![] };
+
+                            self.emit_type_assertion(&rval, &target.ty, &value.ty, expr.span);
 
                             self.push_statement(Statement {
                                 kind: StatementKind::Assign(temp_place.clone(), Rvalue::Use(rval)),
@@ -205,6 +222,8 @@ impl MIRBuilder {
                             projection: vec![ProjectionElem::Index(index_local)],
                         };
                         
+                        self.emit_type_assertion(&rval, &target.ty, &value.ty, expr.span);
+
                         self.push_statement(Statement {
                             kind: StatementKind::Assign(target_place.clone(), Rvalue::Use(rval)),
                             span: expr.span,
@@ -321,14 +340,17 @@ impl MIRBuilder {
             VIRExprKind::Return(opt_expr) => {
                 if let Some(expr) = opt_expr {
                     let rval_op = self.lower_expr(expr);
-                    // Force assignment into Local _0 (which is always the Return slot)
                     let ret_place = Place { local: LocalID(0), projection: vec![] };
+
+                    let expected_ty = self.locals[0].ty.clone(); // Local 0 is always the return value
+                    self.emit_type_assertion(&rval_op, &expected_ty, &expr.ty, expr.span);
+
                     self.push_statement(Statement {
                         kind: StatementKind::Assign(ret_place, Rvalue::Use(rval_op)),
                         span: expr.span,
                     });
-                }
-                
+                } 
+
                 self.terminate_block(Terminator::Return);
                 self.current_block = self.new_block(); // Dead code block for anything below the return
                 Operand::Const(Constant::None)
@@ -682,6 +704,15 @@ impl MIRBuilder {
             }
 
             _ => unimplemented!("[ICE] MIR lowering for this VIR expression is not yet implemented: {:?}", expr.kind),
+        }
+    }
+
+    fn emit_type_assertion(&mut self, operand: &Operand, expected: &TypeExpr, actual: &TypeExpr, span: Span) {
+        if *expected != TypeExpr::Any && *actual == TypeExpr::Any {
+            self.push_statement(Statement {
+                kind: StatementKind::AssertType(operand.clone(), expected.clone()),
+                span,
+            });
         }
     }
 }
