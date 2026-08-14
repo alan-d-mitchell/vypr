@@ -167,7 +167,7 @@ impl MIRBuilder {
                                 span: expr.span,
                             });
 
-                            return Operand::Copy(place);
+                            Operand::Copy(place)
                         } else {
                             let temp = self.new_local(TypeExpr::Any, None);
                             let temp_place = Place { local: temp, projection: vec![] };
@@ -232,8 +232,69 @@ impl MIRBuilder {
                         Operand::Copy(target_place)
                     }
 
+                    VIRExprKind::PropertyAccess { object, property } => {
+                        let base_op = self.lower_expr(object);
+
+                        let base_local = match base_op.clone() {
+                            Operand::Copy(p) => p.local,
+                            Operand::Static(_) => {
+                                let temp = self.new_local(TypeExpr::Any, None);
+                                self.push_statement(Statement {
+                                    kind: StatementKind::Assign(Place { local: temp, projection: vec![] }, Rvalue::Use(base_op)),
+                                    span: expr.span,
+                                });
+                                temp
+                            }
+                            Operand::Const(_) => panic!("cannot assign to property of constant!"),
+                        };
+
+                        let target_place = Place {
+                            local: base_local,
+                            projection: vec![ProjectionElem::Property(property.clone())],
+                        };
+                        
+                        self.emit_type_assertion(&rval, &target.ty, &value.ty, expr.span);
+
+                        self.push_statement(Statement {
+                            kind: StatementKind::Assign(target_place.clone(), Rvalue::Use(rval)),
+                            span: expr.span,
+                        });
+
+                        Operand::Copy(target_place)
+                    }
+
                     _ => unimplemented!("[ICE] assignment to non-variable/non-subscript targets"),
                 }
+            }
+
+            VIRExprKind::PropertyAccess { object, property } => {
+                let base_op = self.lower_expr(object);
+                
+                let base_local = match base_op {
+                    Operand::Copy(p) => p.local,
+                    Operand::Static(_) => {
+                        let temp = self.new_local(TypeExpr::Any, None);
+                        self.push_statement(Statement {
+                            kind: StatementKind::Assign(Place { local: temp, projection: vec![] }, Rvalue::Use(base_op)),
+                            span: expr.span,
+                        });
+                        temp
+                    }
+                    Operand::Const(_) => panic!("cannot access property of constant!"),
+                };
+
+                let temp_local = self.new_local(TypeExpr::Any, None);
+                let source_place = Place {
+                    local: base_local,
+                    projection: vec![ProjectionElem::Property(property.clone())],
+                };
+                
+                self.push_statement(Statement {
+                    kind: StatementKind::Assign(Place { local: temp_local, projection: vec![] }, Rvalue::Use(Operand::Copy(source_place))),
+                    span: expr.span,
+                });
+
+                Operand::Copy(Place { local: temp_local, projection: vec![] })
             }
 
             // --- 3. Math & Logic ---

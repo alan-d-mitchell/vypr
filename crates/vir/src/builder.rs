@@ -424,6 +424,13 @@ impl VIRBuilder {
                 }
             }
 
+            ExprKind::PropertyAccess { callee, property } => {
+                VIRExprKind::PropertyAccess { 
+                    object: Box::new(self.lower_expr(callee)), 
+                    property: property.clone() 
+                }
+            }
+
             ExprKind::Assign { target, value } => {
                 VIRExprKind::Assign {
                     target: Box::new(self.lower_expr(target)),

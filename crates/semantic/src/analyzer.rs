@@ -355,6 +355,11 @@ impl Analyzer {
                 Err(self.error("S008", "cannot verify signatures of callee", span))
             },
 
+            ExprKind::PropertyAccess { callee, property: _ } => {
+                self.infer_type(callee)?;
+                Ok(TypeExpr::Any)
+            }
+
             ExprKind::Assign { target, value } => {
                 let target_type = self.infer_type(target)?;
                 let value_type = self.infer_type(value)?;

@@ -865,7 +865,20 @@ impl<'p> Parser<'p> {
             } else if self.match_token(TokenType::LBRACKET) {
                 expr = self.finish_subscript(expr)?;
             } else if self.match_token(TokenType::PERIOD) {
-                expr = self.finish_method_call(expr)?;
+                let span = expr.span;
+
+                let property_name = match self.advance().kind {
+                    TokenType::IDENTIFIER(name) => name,
+                    _ => return Err(self.make_error("P014", "expected property name after '.'"))
+                };
+
+                if self.match_token(TokenType::LPAREN) {
+                    let (args, kwargs) = self.arguments()?;
+                    self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
+                    expr = Expr { kind: ExprKind::MethodCall { callee: Box::new(expr), method: property_name, args, kwargs }, span };
+                } else {
+                    expr = Expr { kind: ExprKind::PropertyAccess { callee: Box::new(expr), property: property_name }, span };
+                }
             } else {
                 break;
             }
@@ -927,23 +940,6 @@ impl<'p> Parser<'p> {
         self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
 
         Ok(Expr { kind: ExprKind::Call { callee: Box::new(callee), args, kwargs }, span })
-    }
-
-    fn finish_method_call(&mut self, callee: Expr) -> Result<Expr, VyprError> {
-        let span = callee.span;
-
-        let method_name = match self.advance().kind {
-            TokenType::IDENTIFIER(name) => name,
-            _ => return Err(self.make_error("P014", "expected method name after '.'")),
-        };
-
-        self.consume(TokenType::LPAREN, "expected '(' after method name")?;
-
-        let (args, kwargs) = self.arguments()?;
-
-        self.consume(TokenType::RPAREN, "expected ')' after arguments")?;
-
-        Ok(Expr { kind: ExprKind::MethodCall { callee: Box::new(callee), method: method_name, args, kwargs }, span })
     }
 
     fn finish_subscript(&mut self, callee: Expr) -> Result<Expr, VyprError> {

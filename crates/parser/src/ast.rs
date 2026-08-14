@@ -117,6 +117,11 @@ pub enum ExprKind {
         index: Box<Expr>
     },
 
+    PropertyAccess {
+        callee: Box<Expr>,
+        property: String,
+    },
+
     Binary {
         left: Box<Expr>,
         operator: TokenType,
