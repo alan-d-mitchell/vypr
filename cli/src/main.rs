@@ -9,6 +9,12 @@ use vir::builder::VIRBuilder;
 use vm::{compiler::Compiler, serializer::Serializer};
 use vm::vm::VM;
 
+const YELLOW: &str = "\x1b[33m";
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const RESET: &str = "\x1b[0m";
+
+
 #[derive(ClapParser, Debug)]
 #[command(name = "vypr", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
@@ -57,7 +63,7 @@ fn parse_emit_flag(s: &str) -> Vec<EmitType> {
                 "chunk" => Some(EmitType::CHUNK),
                 "vyc" => Some(EmitType::VYC),
                 _ => {
-                    eprintln!("[WARNING] unknown emit type '{}'", part);
+                    eprintln!("{}[WARNING]{} unknown emit type '{}'", YELLOW, RESET, part);
                     None
                 }
             }
@@ -66,6 +72,7 @@ fn parse_emit_flag(s: &str) -> Vec<EmitType> {
 }
 
 fn main() {
+
     let cli = Cli::parse();
 
     if cli.input.is_none() {
@@ -96,7 +103,7 @@ fn main() {
     match input_path.extension().and_then(|e| e.to_str()) {
         Some("vypr" | "py") => {}
         _ => {
-            eprintln!("[ERROR] '{}' is not a vypr or python file", input);
+            eprintln!("{}[ERROR]{} '{}' is not a vypr or python file", RED, RESET, input);
             process::exit(1);
         }
     }
@@ -104,7 +111,7 @@ fn main() {
     let contents = match fs::read_to_string(&input) {
         Ok(c) => c,
         Err(e) => {
-            println!("[ERROR] failed while reading '{}': {}", input, e);
+            println!("{}[ERROR]{} failed while reading '{}': {}", RED, RESET, input, e);
             process::exit(1);
         }
     };
@@ -128,7 +135,7 @@ fn main() {
         
         let fname = input_path.with_extension("tokens").to_string_lossy().into_owned();
         fs::write(&fname, output).ok();
-        println!("[INFO] tokens written to: {}", fname);
+        println!("{}[INFO]{} tokens written to: {}", GREEN, RESET, fname);
     }
 
     // --- PHASE 2: PARSER ---
@@ -150,7 +157,7 @@ fn main() {
         
         let fname = input_path.with_extension("nodes").to_string_lossy().into_owned();
         fs::write(&fname, output).ok();
-        println!("[INFO] ast nodes written to: {}", fname);
+        println!("{}[INFO]{} ast nodes written to: {}", GREEN, RESET, fname);
     }
     
     // --- PHASE 3: SEMANTIC ANALYSIS ---
@@ -169,7 +176,7 @@ fn main() {
         let output = format!("{}", vir_program);
         let fname = input_path.with_extension("vir").to_string_lossy().into_owned();
         fs::write(&fname, output).ok();
-        println!("[INFO] vir written to: {}", fname);
+        println!("{}[INFO]{} vir written to: {}", GREEN, RESET, fname);
     }
 
     // --- PHASE 5: MIR LOWERING ---
@@ -185,7 +192,7 @@ fn main() {
         let output = format!("{}", mir_program);
         let fname = input_path.with_extension("dbg.mir").to_string_lossy().into_owned();
         fs::write(&fname, output).ok();
-        println!("[INFO] dbg mir written to: {}", fname);
+        println!("{}[INFO]{} dbg mir written to: {}", GREEN, RESET, fname);
     }
 
     if emit_chunk_dbg {
@@ -199,7 +206,7 @@ fn main() {
                 let output = chunk.disassemble(&script_name);
                 let debug_fname = input_path.with_extension("dbg.chunk").to_string_lossy().into_owned();
                 fs::write(&debug_fname, output).ok();
-                println!("[INFO] dbg bytecode written to: {}", debug_fname);
+                println!("{}[INFO]{} dbg bytecode written to: {}", GREEN, RESET, debug_fname);
             }
 
             Err(e) => {
@@ -215,7 +222,7 @@ fn main() {
         let output = format!("{}", mir_program);
         let fname = input_path.with_extension("mir").to_string_lossy().into_owned();
         fs::write(&fname, output).ok();
-        println!("[INFO] release mir written to: {}", fname);
+        println!("{}[INFO]{} release mir written to: {}", GREEN, RESET, fname);
     }
 
     // --- PHASE 6: COMPILATION ---
@@ -231,7 +238,7 @@ fn main() {
                 let output = chunk.disassemble(&script_name);
                 let debug_fname = input_path.with_extension("chunk").to_string_lossy().into_owned();
                 fs::write(&debug_fname, output).ok();
-                println!("[INFO] release bytecode written to: {}", debug_fname);
+                println!("{}[INFO]{} release bytecode written to: {}", GREEN, RESET, debug_fname);
             }
 
             // 2. Emit .vyc (Binary Serialized)
@@ -240,8 +247,8 @@ fn main() {
                 let mut serializer = Serializer::new(&fname).expect("failed to create .vyc file");
                 
                 match serializer.serialize(&chunk) {
-                    Ok(_) => println!("[INFO] binary bytecode written to: {}", fname),
-                    Err(e) => eprintln!("[ERROR] failed to write bytecode: {}", e),
+                    Ok(_) => println!("{}[INFO]{} binary bytecode written to: {}", GREEN, RESET, fname),
+                    Err(e) => eprintln!("{}[ERROR]{} failed to write bytecode: {}", RED, RESET, e),
                 }
             }
 
