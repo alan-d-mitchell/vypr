@@ -350,6 +350,7 @@ impl VM {
                             Value::Int(i) => i,
                             _ => return Err(self.error("R002", "string index must be an integer"))
                         };
+
                         let char_count = s.chars().count() as i64;
                         let effective_index = if index < 0 {
                             char_count + index
@@ -366,6 +367,7 @@ impl VM {
                         } else {
                             return Err(self.error("R003", "string index out of range"));
                         }
+
                         continue;
                     }
 
@@ -375,6 +377,7 @@ impl VM {
                                 Value::Int(i) => i,
                                 _ => return Err(self.error("R002", "list index must be an integer"))
                             };
+
                             let borrowed = items.borrow();
 
                             let effective_index = if index < 0 {
@@ -396,6 +399,7 @@ impl VM {
                                 Value::Int(i) => i,
                                 _ => return Err(self.error("R002", "range index must be an integer"))
                             };
+
                             let len = if stop > start { stop - start } else { 0 };
                             let effective_index = if index < 0 { len + index } else { index };
 

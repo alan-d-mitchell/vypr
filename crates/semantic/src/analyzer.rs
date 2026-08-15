@@ -478,6 +478,14 @@ impl Analyzer {
                         Ok(TypeExpr::Any)
                     }
 
+                    TypeExpr::Atomic(TokenType::STR) => {
+                        if !self.types_match(&TypeExpr::Atomic(TokenType::INT), &index_type) {
+                            return Err(self.error("S010", format!("string indices must be integers, not {}", index_type), span));
+                        }
+
+                        Ok(TypeExpr::Atomic(TokenType::STR))
+                    }
+
                     _ => Err(self.error("S011", format!("type {} is not subscriptable", base_type), span))
                 }
             }
