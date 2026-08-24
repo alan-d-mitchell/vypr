@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use error::error::Span;
 
-use crate::value::{Value, DataType};
+use crate::value::{DataType, ObjectFunction, ObjectType, Value};
 use crate::vm::MethodCache;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -95,7 +95,7 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
-        // fast path for stack and heap strings
+        // Fast path for strings: deduplicate by content
         if let Some(s) = value.as_str() {
             if let Some(&idx) = self.strings.get(s) {
                 return idx;
@@ -107,63 +107,13 @@ impl Chunk {
             return idx;
         }
 
-        match &value {
-            Value::Int(i) => {
-                if let Some(&idx) = self.ints.get(i) {
-                    return idx;
-                }
-
-                let idx = self.constants.len();
-                self.ints.insert(*i, idx);
-                self.constants.push(value);
-                idx
-            }
-
-            Value::Float(f) => {
-                let bits = f.to_bits();
-
-                if let Some(&idx) = self.floats.get(&bits) {
-                    return idx;
-                }
-
-                let idx = self.constants.len();
-                self.floats.insert(bits, idx);
-                self.constants.push(value);
-                idx
-            }
-
-            Value::Bool(b) => {
-                if *b {
-                    if let Some(idx) = self.true_idx { return idx; }
-                    let idx = self.constants.len();
-
-                    self.true_idx = Some(idx);
-                    self.constants.push(value);
-                    idx
-                } else {
-                    if let Some(idx) = self.false_idx { return idx; }
-
-                    let idx = self.constants.len();
-                    self.false_idx = Some(idx);
-                    self.constants.push(value);
-                    idx
-                }
-            }
-
-            Value::None => {
-                if let Some(idx) = self.none_idx { return idx; }
-                let idx = self.constants.len();
-
-                self.none_idx = Some(idx);
-                self.constants.push(value);
-                idx
-            }
-
-            _ => {
-                self.constants.push(value);
-                self.constants.len() - 1
-            }
+        // For primitives (int, float, bool, none), check if exact u64 representation already exists
+        if let Some(idx) = self.constants.iter().position(|&c| c.0 == value.0) {
+            return idx;
         }
+
+        self.constants.push(value);
+        self.constants.len() - 1
     }
 
     pub fn disassemble(&self, name: &str) -> String {
@@ -246,10 +196,16 @@ impl Chunk {
         }
 
         for (i, constant) in self.constants.iter().enumerate() {
-            if let Value::Function(function) = constant {
-                writeln!(&mut s).unwrap();
-                let inner_output = function.chunk.disassemble(&format!("<fn {}>", i));
-                s.push_str(&inner_output);
+            if constant.is_object() {
+                unsafe {
+                    let obj = constant.as_object();
+                    if (*obj).ty == ObjectType::FUNCTION {
+                        let function = &*(obj as *const ObjectFunction);
+                        writeln!(&mut s).unwrap();
+                        let inner_output = function.chunk.disassemble(&format!("<fn {}>", i));
+                        s.push_str(&inner_output);
+                    }
+                }
             }
         }
 

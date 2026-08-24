@@ -77,86 +77,63 @@ impl Serializer {
     }
 
     fn write_value(&mut self, val: &Value) -> io::Result<()> {
-        match val {
-            Value::Int(i) => {
-                self.file.write_all(&[0x01])?;
-                self.file.write_all(&i.to_be_bytes())?;
-            }
-
-            Value::Float(f) => {
-                self.file.write_all(&[0x02])?;
-                self.file.write_all(&f.to_be_bytes())?;
-            }
-
-            Value::Bool(b) => {
-                self.file.write_all(&[0x03])?;
-                self.file.write_all(&[if *b { 1 } else { 0 }])?;
-            }
-
-            Value::Str(s) => {
-                self.file.write_all(&[0x04])?;
-                let len = s.len() as u32;
-                self.file.write_all(&len.to_be_bytes())?;
-                self.file.write_all(s.as_bytes())?;
-            }
-
-            Value::InlineStr(len, buf) => {
-                self.file.write_all(&[0x04])?;
-                self.file.write_all(&(*len as u32).to_be_bytes())?;
-                self.file.write_all(&buf[..(*len as usize)])?;
-            }
-
-            Value::None => {
-                self.file.write_all(&[0x05])?;
-            }
-
-            Value::Native(_) => {
-                self.file.write_all(&[0x05])?; 
-            }
-
-            Value::Function(function) => {
-                self.file.write_all(&[0x06])?;
-                self.write_chunk(&function.chunk)?;
-            }
-
-            Value::List(items) => {
-                self.file.write_all(&[0x07])?; 
-                let borrowed = items.borrow();
-                let len = borrowed.len() as u32;
-                self.file.write_all(&len.to_be_bytes())?;
-
-                for item in borrowed.iter() {
-                    self.write_value(item)?;
+        if val.is_int() {
+            self.file.write_all(&[0x01])?;
+            self.file.write_all(&(val.as_int() as i64).to_be_bytes())?;
+        } else if val.is_float() {
+            self.file.write_all(&[0x02])?;
+            self.file.write_all(&val.as_float().to_be_bytes())?;
+        } else if val.is_bool() {
+            self.file.write_all(&[0x03])?;
+            self.file.write_all(&[if val.as_bool() { 1 } else { 0 }])?;
+        } else if val.is_none() {
+            self.file.write_all(&[0x05])?;
+        } else if val.is_object() {
+            unsafe {
+                let obj = val.as_object();
+                match (*obj).ty {
+                    crate::value::ObjectType::STRING => {
+                        let s = &*(obj as *const crate::value::ObjectString);
+                        self.file.write_all(&[0x04])?;
+                        let len = s.chars.len() as u32;
+                        self.file.write_all(&len.to_be_bytes())?;
+                        self.file.write_all(s.chars.as_bytes())?;
+                    }
+                    crate::value::ObjectType::FUNCTION => {
+                        let f = &*(obj as *const crate::value::ObjectFunction);
+                        self.file.write_all(&[0x06])?;
+                        self.write_chunk(&f.chunk)?;
+                    }
+                    crate::value::ObjectType::LIST => {
+                        let l = &*(obj as *const crate::value::ObjectList);
+                        self.file.write_all(&[0x07])?;
+                        let len = l.items.len() as u32;
+                        self.file.write_all(&len.to_be_bytes())?;
+                        for item in &l.items {
+                            self.write_value(item)?;
+                        }
+                    }
+                    crate::value::ObjectType::RANGE => {
+                        let r = &*(obj as *const crate::value::ObjectRange);
+                        self.file.write_all(&[0x08])?;
+                        self.file.write_all(&(r.start as i64).to_le_bytes())?;
+                        self.file.write_all(&(r.stop as i64).to_le_bytes())?;
+                    }
+                    crate::value::ObjectType::DICT => {
+                        let d = &*(obj as *const crate::value::ObjectDict);
+                        self.file.write_all(&[0x09])?;
+                        let len = d.items.len() as u32;
+                        self.file.write_all(&len.to_be_bytes())?;
+                        for (k, v) in &d.items {
+                            self.write_value(k)?;
+                            self.write_value(v)?;
+                        }
+                    }
+                    _ => {
+                        // Native functions, Modules, and Files cannot be serialized into constants
+                        self.file.write_all(&[0x05])?; 
+                    }
                 }
-            }
-
-            Value::Range(bounds) => {
-                let (start, stop) = **bounds;
-                self.file.write_all(&[0x08])?;
-                self.file.write_all(&start.to_le_bytes())?;
-                self.file.write_all(&stop.to_le_bytes())?;
-            }
-
-            Value::Dict(dict) => {
-                self.file.write_all(&[0x09])?;
-
-                let borrowed = dict.borrow();
-                let len = borrowed.len() as u32;
-
-                self.file.write_all(&len.to_be_bytes())?;
-
-                for (k, v) in borrowed.iter() {
-                    self.write_value(&k.to_value())?;
-                    self.write_value(v)?;
-                }
-            }
-
-            Value::UnloadedModule(_) | Value::Module(_) => {
-                unreachable!("live modules are never serialized into the constant pool");
-            }
-
-            Value::File(_) => {
-                unreachable!("live file handles are never serialized into the constant pool");
             }
         }
 

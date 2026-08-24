@@ -1,5 +1,10 @@
+// ------------------------------------------------------------------------
+// DISPLAY TRAIT IMPLEMENTATIONS
+// ------------------------------------------------------------------------
+
 use crate::mir::*;
 use std::fmt;
+use vir::context::Constant;
 
 // 1. Program & Functions
 impl fmt::Display for MIRProgram {
@@ -10,6 +15,42 @@ impl fmt::Display for MIRProgram {
                 writeln!(f, "\n")?;
             }
         }
+
+        let mut strings = Vec::new();
+        self.collect_strings(&mut strings);
+        
+        if !strings.is_empty() {
+            writeln!(f, "\n")?;
+            for (i, s) in strings.iter().enumerate() {
+                let bytes = s.as_bytes();
+                writeln!(f, "alloc{} (size: {}, align: 1) {{", i + 1, bytes.len())?;
+                
+                for chunk in bytes.chunks(16) {
+                    let mut hex_part = String::new();
+                    let mut ascii_part = String::new();
+                    
+                    for &b in chunk {
+                        hex_part.push_str(&format!("{:02x} ", b));
+
+                        // only print visible ASCII characters, otherwise print a dot
+                        if (32..=126).contains(&b) {
+                            ascii_part.push(b as char);
+                        } else {
+                            ascii_part.push('.');
+                        }
+                    }
+                    
+                    // pad the hex part out to 48 characters so the ASCII columns align perfectly
+                    writeln!(f, "    {:<48} │ {}", hex_part, ascii_part)?;
+                }
+                writeln!(f, "}}")?;
+                
+                if i < strings.len() - 1 {
+                    writeln!(f)?;
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -197,3 +238,106 @@ impl fmt::Display for Place {
     }
 }
 
+// ------------------------------------------------------------------------
+// STRING COLLECTION TRAIT FOR ALLOC DUMPS
+// ------------------------------------------------------------------------
+
+/// Private helper trait to scan the MIR tree and find all strings that 
+/// the Compiler is going to allocate into the chunk constant pool.
+trait CollectStrings {
+    fn collect_strings(&self, out: &mut Vec<String>);
+}
+
+impl CollectStrings for MIRProgram {
+    fn collect_strings(&self, out: &mut Vec<String>) {
+        for f in &self.functions {
+            f.collect_strings(out);
+        }
+    }
+}
+
+impl CollectStrings for MIRFunction {
+    fn collect_strings(&self, out: &mut Vec<String>) {
+        for bb in &self.basic_blocks {
+            for stmt in &bb.statements {
+                stmt.kind.collect_strings(out);
+            }
+            bb.terminator.collect_strings(out);
+        }
+    }
+}
+
+impl CollectStrings for StatementKind {
+    fn collect_strings(&self, out: &mut Vec<String>) {
+        match self {
+            StatementKind::Assign(_, rval)
+            | StatementKind::AssignGlobal(_, rval)
+            | StatementKind::DefineGlobal(_, _, rval) => rval.collect_strings(out),
+            StatementKind::AssertType(op, _) => op.collect_strings(out),
+        }
+    }
+}
+
+impl CollectStrings for Rvalue {
+    fn collect_strings(&self, out: &mut Vec<String>) {
+        match self {
+            Rvalue::Use(op) | Rvalue::UnaryOp(_, op) | Rvalue::Length(op) => op.collect_strings(out),
+            Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::ListAppend(lhs, rhs) => {
+                lhs.collect_strings(out);
+                rhs.collect_strings(out);
+            }
+            Rvalue::ListInit(ops) | Rvalue::FormatString(ops) => {
+                for op in ops { op.collect_strings(out); }
+            }
+            Rvalue::DictInit(keys, vals) => {
+                for op in keys { op.collect_strings(out); }
+                for op in vals { op.collect_strings(out); }
+            }
+            Rvalue::Import(module) => {
+                if !out.contains(module) {
+                    out.push(module.clone());
+                }
+            }
+            Rvalue::FunctionDef(f) => f.collect_strings(out),
+        }
+    }
+}
+
+impl CollectStrings for Terminator {
+    fn collect_strings(&self, out: &mut Vec<String>) {
+        match self {
+            Terminator::SwitchInt { discriminant, .. } => discriminant.collect_strings(out),
+            Terminator::Call { callee, args, kwargs, .. } => {
+                callee.collect_strings(out);
+                for op in args { op.collect_strings(out); }
+                // Kwarg keys are allocated as string constants by the compiler!
+                for (name, op) in kwargs {
+                    if !out.contains(name) { out.push(name.clone()); }
+                    op.collect_strings(out);
+                }
+            }
+            Terminator::MethodCall { object, method_name, args, kwargs, .. } => {
+                object.collect_strings(out);
+                // Method names are allocated as string constants by the compiler!
+                if !out.contains(method_name) { out.push(method_name.clone()); }
+                for op in args { op.collect_strings(out); }
+                for (name, op) in kwargs {
+                    if !out.contains(name) { out.push(name.clone()); }
+                    op.collect_strings(out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl CollectStrings for Operand {
+    fn collect_strings(&self, out: &mut Vec<String>) {
+        // Find raw string literals
+        if let Operand::Const(Constant::String(s)) = self {
+            if !out.contains(s) {
+                out.push(s.clone());
+            }
+        }
+    }
+}

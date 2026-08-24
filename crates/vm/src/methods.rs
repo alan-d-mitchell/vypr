@@ -1,6 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::io::{Read, Write, BufRead, BufReader};
 use error::error::VyprError;
-use crate::{value::{DataType, DictKey, SharedFile, Value::{self}}, vm::{MethodCache, VM}};
+use crate::{
+    value::{ObjectDict, ObjectFile, ObjectList, ObjectRange, ObjectType, Value}, 
+    vm::{MethodCache, VM}
+};
 
 impl VM {
 
@@ -17,13 +20,18 @@ impl VM {
 
         let cache_type = if let Some(s) = obj.as_str() {
             self.invoke_string_method(s, &method_name, &args)?
-        } else {
-            match obj {
-                Value::List(items) => self.invoke_list_method(items, &method_name, &args)?,
-                Value::Dict(dict) => self.invoke_dict_method(dict, &method_name, &args)?,
-                Value::File(file) => self.invoke_file_method(file, &method_name, &args)?,
-                val => return Err(self.error("R004", format!("object {:?} has no method '{}'", val.get_type(), method_name))),
+        } else if obj.is_object() {
+            unsafe {
+                let raw_obj = obj.as_object();
+                match (*raw_obj).ty {
+                    ObjectType::LIST => self.invoke_list_method(&mut *(raw_obj as *mut ObjectList), &method_name, &args)?,
+                    ObjectType::DICT => self.invoke_dict_method(&mut *(raw_obj as *mut ObjectDict), &method_name, &args)?,
+                    ObjectType::FILE => self.invoke_file_method(&mut *(raw_obj as *mut ObjectFile), &method_name, &args)?,
+                    _ => return Err(self.error("R004", format!("object {:?} has no method '{}'", obj.get_type(), method_name))),
+                }
             }
+        } else {
+            return Err(self.error("R004", format!("object {:?} has no method '{}'", obj.get_type(), method_name)));
         };
 
         if cache_type != MethodCache::EMPTY {
@@ -33,30 +41,21 @@ impl VM {
         Ok(())
     }
 
-    fn invoke_list_method(&mut self, items: Rc<RefCell<Vec<Value>>>, method: &str, args: &[Value]) -> Result<MethodCache, VyprError> {
+    fn invoke_list_method(&mut self, list: &mut ObjectList, method: &str, args: &[Value]) -> Result<MethodCache, VyprError> {
         match method {
             "append" => {
-                if args.len() > 1 {
-                    return Err(self.error("R006", "append() takes exactly 1 argument").with_help("remove the extra arguments"));
-                }
-                if args.is_empty() {
-                    return Err(self.error("R006", "append() takes exactly 1 argument").with_help("add an argument"));
-                }
+                if args.len() > 1 { return Err(self.error("R006", "append() takes exactly 1 argument").with_help("remove the extra arguments")); }
+                if args.is_empty() { return Err(self.error("R006", "append() takes exactly 1 argument").with_help("add an argument")); }
 
-                items.borrow_mut().push(args[0].clone());
-                self.push(Value::None);
-
+                list.items.push(args[0].clone());
+                self.push(Value::none());
                 Ok(MethodCache::ListAppend)
             }
 
             "clear" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "clear() takes no arguments").with_help("remove the arguments"));
-                }
-
-                items.borrow_mut().clear();
-                self.push(Value::None);
-
+                if !args.is_empty() { return Err(self.error("R006", "clear() takes no arguments").with_help("remove the arguments")); }
+                list.items.clear();
+                self.push(Value::none());
                 Ok(MethodCache::EMPTY)
             }
 
@@ -66,61 +65,35 @@ impl VM {
                     return Err(self.error("R006", format!("insert() takes exactly 2 arguments, got {}", args.len())).with_help(hint));
                 }
 
-                let index = match args[0] {
-                    Value::Int(i) => i,
-                    _ => return Err(self.error("R002", "insert() index must be an integer")),
-                };
-
+                let index = if args[0].is_int() { args[0].as_int() as i64 } else { return Err(self.error("R002", "insert() index must be an integer")); };
                 let value = args[1].clone();
-                let mut borrowed_items = items.borrow_mut();
-                let len = borrowed_items.len() as i64;
+                let len = list.items.len() as i64;
 
                 if index >= len {
-                    borrowed_items.push(value);
+                    list.items.push(value);
                 } else if index < 0 {
                     let effective_index = len + index;
-
-                    if effective_index < 0 {
-                        borrowed_items.insert(0, value);
-                    } else {
-                        borrowed_items.insert(effective_index as usize, value);
-                    }
+                    if effective_index < 0 { list.items.insert(0, value); } else { list.items.insert(effective_index as usize, value); }
                 } else {
-                    borrowed_items.insert(index as usize, value);
+                    list.items.insert(index as usize, value);
                 }
 
-                self.push(Value::None);
+                self.push(Value::none());
                 Ok(MethodCache::EMPTY)
             }
 
             "pop" => {
-                if args.len() > 1 {
-                    return Err(self.error("R006", format!("pop() takes at most 1 argument, got {}", args.len())).with_help("remove extra arguments"));
-                }
+                if args.len() > 1 { return Err(self.error("R006", format!("pop() takes at most 1 argument, got {}", args.len())).with_help("remove extra arguments")); }
 
-                let index = if args.is_empty() {
-                    -1
-                } else {
-                    match args[0] {
-                        Value::Int(i) => i,
-                        _ => return Err(self.error("R002", "pop index must be an integer")),
-                    }
-                };
+                let index = if args.is_empty() { -1 } else if args[0].is_int() { args[0].as_int() as i64 } else { return Err(self.error("R002", "pop index must be an integer")); };
+                let len = list.items.len() as i64;
 
-                let mut borrowed_items = items.borrow_mut();
-                let len = borrowed_items.len() as i64;
-
-                if len == 0 {
-                    return Err(self.error("R003", "pop from empty list"));
-                }
+                if len == 0 { return Err(self.error("R003", "pop from empty list")); }
 
                 let effective_index = if index < 0 { len + index } else { index };
-                if effective_index < 0 || effective_index >= len {
-                    return Err(self.error("R003", "pop index out of range"));
-                }
+                if effective_index < 0 || effective_index >= len { return Err(self.error("R003", "pop index out of range")); }
 
-                let popped_value = borrowed_items.remove(effective_index as usize);
-
+                let popped_value = list.items.remove(effective_index as usize);
                 self.push(popped_value);
                 Ok(MethodCache::ListPop)
             }
@@ -132,17 +105,13 @@ impl VM {
                 }
 
                 let value_to_remove = &args[0];
-                let mut borrowed_items = items.borrow_mut();
 
-                if let Some(index) = borrowed_items.iter().position(|x| x == value_to_remove) {
-                    borrowed_items.remove(index);
-                    self.push(Value::None);
-
+                if let Some(index) = list.items.iter().position(|x| x == value_to_remove) {
+                    list.items.remove(index);
+                    self.push(Value::none());
                     Ok(MethodCache::EMPTY)
                 } else {
-                    Err(self.error("R008", format!("'{}' is not in list", value_to_remove))
-                        .with_help("try calling remove() with an element in the list")
-                    )
+                    Err(self.error("R008", format!("'{}' is not in list", value_to_remove)).with_help("try calling remove() with an element in the list"))
                 }
             }
 
@@ -153,136 +122,100 @@ impl VM {
     fn invoke_string_method(&mut self, s: &str, method: &str, args: &[Value]) -> Result<MethodCache, VyprError> {
         match method {
             "startswith" | "endswith" => {
-                if args.len() != 1 {
-                    let hint = if args.len() > 1 { "remove extra arguments" } else { "add missing arguments" };
-                    return Err(self.error("R006", format!("{}() takes exactly 1 argument, got {}", method, args.len())).with_help(hint));
-                }
-
+                if args.len() != 1 { return Err(self.error("R006", format!("{}() takes exactly 1 argument, got {}", method, args.len()))); }
                 let prefix = match args[0].as_str() {
                     Some(p) => p,
                     None => return Err(self.error("R002", format!("{}() arg must be a string", method))),
                 };
-
                 let result = if method == "startswith" { s.starts_with(prefix) } else { s.ends_with(prefix) };
-
-                self.push(Value::Bool(result));
+                self.push(Value::boolean(result));
                 Ok(MethodCache::EMPTY)
             }
 
             "isascii" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "isascii() takes no arguments").with_help("remove the arguments"));
-                }
-
-                self.push(Value::Bool(s.is_ascii()));
+                if !args.is_empty() { return Err(self.error("R006", "isascii() takes no arguments")); }
+                self.push(Value::boolean(s.is_ascii()));
                 Ok(MethodCache::EMPTY)
             }
 
             "isupper" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "isupper() takes no arguments").with_help("remove the arguments"));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "isupper() takes no arguments")); }
                 let is_upper = !s.is_empty() && s == s.to_uppercase() && s != s.to_lowercase();
-                self.push(Value::Bool(is_upper));
-
+                self.push(Value::boolean(is_upper));
                 Ok(MethodCache::EMPTY)
             }
 
             "islower" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "islower() takes no arguments").with_help("remove the arguments"));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "islower() takes no arguments")); }
                 let is_lower = !s.is_empty() && s == s.to_lowercase() && s != s.to_uppercase();
-                self.push(Value::Bool(is_lower));
-
+                self.push(Value::boolean(is_lower));
                 Ok(MethodCache::EMPTY)
             }
 
             "isnumeric" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "isnumeric() takes no arguments").with_help("remove the arguments"));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "isnumeric() takes no arguments")); }
                 let is_numeric = !s.is_empty() && s.chars().all(char::is_numeric);
-                self.push(Value::Bool(is_numeric));
-
+                self.push(Value::boolean(is_numeric));
                 Ok(MethodCache::EMPTY)
             }
 
             "join" => {
-                if args.len() != 1 {
-                    let hint = if args.len() > 1 { "remove extra arguments" } else { "add missing arguments" };
-                    return Err(self.error("R006", format!("join() takes exactly 1 argument, got {}", args.len())).with_help(hint));
-                }
+                if args.len() != 1 { return Err(self.error("R006", format!("join() takes exactly 1 argument, got {}", args.len()))); }
 
-                let joined = match &args[0] {
-                    Value::List(items) => {
-                        let borrowed = items.borrow();
-                        let string: Vec<String> = borrowed.iter().map(|v| v.to_string()).collect();
-                        string.join(s)
-                    },
-
-                    Value::Range(bounds) => {
-                        let (start, stop) = **bounds;
-                        let string_elements: Vec<String> = (start..stop).map(|v| v.to_string()).collect();
-                        string_elements.join(s)
-                    },
-                    
-                    val if val.get_type() == DataType::Str => {
-                        let string_elements: Vec<String> = val.as_str().unwrap().chars().map(|c| c.to_string()).collect();
-                        string_elements.join(s)
-                    },
-                    _ => return Err(self.error("R002", "join() expects an iterable")),
+                let joined = if args[0].is_object() {
+                    unsafe {
+                        let obj = args[0].as_object();
+                        match (*obj).ty {
+                            ObjectType::LIST => {
+                                let list = &*(obj as *const ObjectList);
+                                let string_elements: Vec<String> = list.items.iter().map(|v| v.to_string()).collect();
+                                string_elements.join(s)
+                            }
+                            ObjectType::RANGE => {
+                                let r = &*(obj as *const ObjectRange);
+                                let string_elements: Vec<String> = (r.start..r.stop).map(|v| v.to_string()).collect();
+                                string_elements.join(s)
+                            }
+                            _ => return Err(self.error("R002", "join() expects an iterable")),
+                        }
+                    }
+                } else if let Some(s_arg) = args[0].as_str() {
+                    let string_elements: Vec<String> = s_arg.chars().map(|c| c.to_string()).collect();
+                    string_elements.join(s)
+                } else {
+                    return Err(self.error("R002", "join() expects an iterable"));
                 };
 
-                self.push(Value::make_string(&joined));
+                let joined_str = Value::make_string(&mut self.heap, &joined);
+                self.push(joined_str);
                 Ok(MethodCache::EMPTY)
             }
 
             "replace" => {
-                if args.len() < 2 || args.len() > 3 {
-                    let hint = if args.len() > 3 { "remove extra arguments" } else { "'old' and 'new' arguments are required" };
-                    return Err(self.error("R006", format!("replace() takes 2 or 3 arguments, got {}", args.len())).with_help(hint));
-                }
-
+                if args.len() < 2 || args.len() > 3 { return Err(self.error("R006", format!("replace() takes 2 or 3 arguments, got {}", args.len()))); }
                 let old_val = match args[0].as_str() {
                     Some(str_val) => str_val,
                     _ => return Err(self.error("R002", "replace() 'old' argument must be a string")),
                 };
-
                 let new_val = match args[1].as_str() {
                     Some(str_val) => str_val,
                     _ => return Err(self.error("R002", "replace() 'new' argument must be a string")),
                 };
 
                 let replaced_string = if args.len() == 3 {
-                    let count = match &args[2] {
-                        Value::Int(i) => *i,
-                        _ => return Err(self.error("R002", "replace() 'count' argument must be an integer")),
-                    };
-
-                    if count < 0 {
-                        s.replace(old_val, new_val)
-                    } else {
-                        s.replacen(old_val, new_val, count as usize)
-                    }
+                    let count = if args[2].is_int() { args[2].as_int() } else { return Err(self.error("R002", "replace() 'count' argument must be an integer")); };
+                    if count < 0 { s.replace(old_val, new_val) } else { s.replacen(old_val, new_val, count as usize) }
                 } else {
                     s.replace(old_val, new_val)
                 };
 
-                self.push(Value::make_string(&replaced_string));
+                let replaced = Value::make_string(&mut self.heap, &replaced_string);
+                self.push(replaced);
                 Ok(MethodCache::EMPTY)
             }
 
             "strip" => {
-                if args.len() > 1 {
-                    return Err(self.error("R006", format!("strip() takes at most 1 argument, got {}", args.len())));
-                }
-
-                // optimization: 'trim()' returns a '&str' slice
-                // which 'make_string()' supports
+                if args.len() > 1 { return Err(self.error("R006", format!("strip() takes at most 1 argument, got {}", args.len()))); }
                 let stripped = if args.is_empty() {
                     s.trim()
                 } else {
@@ -292,81 +225,48 @@ impl VM {
                     }
                 };
 
-                self.push(Value::make_string(&stripped));
+                let stripped_val = Value::make_string(&mut self.heap, stripped);
+                self.push(stripped_val);
                 Ok(MethodCache::EMPTY)
             }
 
-            // optimization: pipe the iterator slices directly into 'make_string()'
-            // prevents allocation of Vec<String>
             "split" => {
-                if args.len() > 2 {
-                    return Err(self.error("R006", format!("split() takes at most 2 arguments, got {}", args.len())));
-                }
-
+                if args.len() > 2 { return Err(self.error("R006", format!("split() takes at most 2 arguments, got {}", args.len()))); }
                 let string_parts: Vec<Value> = if args.is_empty() {
-                    s.split_whitespace().map(Value::make_string).collect()
+                    s.split_whitespace().map(|part| Value::make_string(&mut self.heap, part)).collect()
                 } else {
                     let separator = match args[0].as_str() {
                         Some(sep) => sep,
                         _ => return Err(self.error("R002", "split() separator must be a string")),
                     };
-
                     if args.len() == 2 {
-                        let maxsplit = match &args[1] {
-                            Value::Int(m) => *m,
-                            _ => return Err(self.error("R002", "split() maxsplit must be an integer")),
-                        };
-
+                        let maxsplit = if args[1].is_int() { args[1].as_int() } else { return Err(self.error("R002", "split() maxsplit must be an integer")); };
                         if maxsplit < 0 {
-                            s.split(separator).map(Value::make_string).collect()
+                            s.split(separator).map(|part| Value::make_string(&mut self.heap, part)).collect()
                         } else {
-                            s.splitn((maxsplit + 1) as usize, separator).map(Value::make_string).collect()
+                            s.splitn((maxsplit + 1) as usize, separator).map(|part| Value::make_string(&mut self.heap, part)).collect()
                         }
                     } else {
-                        s.split(separator).map(Value::make_string).collect()
+                        s.split(separator).map(|part| Value::make_string(&mut self.heap, part)).collect()
                     }
                 };
 
-                self.push(Value::List(Rc::new(RefCell::new(string_parts))));
-
+                let list_val = Value::allocate_list(&mut self.heap, string_parts);
+                self.push(list_val);
                 Ok(MethodCache::EMPTY)
             }
 
-            // optimization: SSO fast path
             "lower" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "lower() takes no arguments"));
-                }
-
-                if s.len() <= 14 && s.is_ascii() {
-                    let mut buf = [0u8; 14];
-                    buf[..s.len()].copy_from_slice(s.as_bytes());
-                    buf[..s.len()].make_ascii_lowercase();
-                    
-                    self.push(Value::InlineStr(s.len() as u8, buf))
-                } else {
-                    self.push(Value::make_string(&s.to_lowercase()));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "lower() takes no arguments")); }
+                let lower_val = Value::make_string(&mut self.heap, &s.to_lowercase());
+                self.push(lower_val);
                 Ok(MethodCache::StringLower)
             }
 
-            // optimization: SSO fast path
             "upper" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "upper() takes no arguments"));
-                }
-
-                if s.len() <= 14 && s.is_ascii() {
-                    let mut buf = [0u8; 14];
-                    buf[..s.len()].copy_from_slice(s.as_bytes());
-                    buf[..s.len()].make_ascii_uppercase();
-                    
-                    self.push(Value::InlineStr(s.len() as u8, buf))
-                } else {
-                    self.push(Value::make_string(&s.to_uppercase()));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "upper() takes no arguments")); }
+                let upper_val = Value::make_string(&mut self.heap, &s.to_uppercase());
+                self.push(upper_val);
                 Ok(MethodCache::StringUpper)
             }
 
@@ -374,102 +274,60 @@ impl VM {
         }
     }
 
-    fn invoke_dict_method(&mut self, dict: Rc<RefCell<HashMap<DictKey, Value>>>, method: &str, args: &[Value]) -> Result<MethodCache, VyprError> {
+    fn invoke_dict_method(&mut self, dict: &mut ObjectDict, method: &str, args: &[Value]) -> Result<MethodCache, VyprError> {
         match method {
             "clear" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "clear() takes no arguments").with_help("remove the arguments"));
-                }
-
-                dict.borrow_mut().clear();
-                self.push(Value::None);
-
+                if !args.is_empty() { return Err(self.error("R006", "clear() takes no arguments")); }
+                dict.items.clear();
+                self.push(Value::none());
                 Ok(MethodCache::EMPTY)
             }
 
             "copy" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "copy() takes no arguments").with_help("remove the arguments"));
-                }
-
-                let cloned_map = dict.borrow().clone();
-                self.push(Value::Dict(Rc::new(RefCell::new(cloned_map))));
-
+                if !args.is_empty() { return Err(self.error("R006", "copy() takes no arguments")); }
+                let cloned_map = dict.items.clone();
+                let dict_val = Value::allocate_dict(&mut self.heap, cloned_map);
+                self.push(dict_val);
                 Ok(MethodCache::EMPTY)
             }
 
             "get" => {
-                if args.is_empty() || args.len() > 2 {
-                    let hint = if args.is_empty() { "add the key argument" } else { "remove extra arguments" };
-                    return Err(self.error("R006", format!("get() takes, at most, 2arguments, got {}", args.len())).with_help(hint));
-                }
-
-                let dict_key = match DictKey::from_value(&args[0]) {
-                    Ok(k) => k,
-                    Err(msg) => return Err(self.error("R002", msg)),
-                };
-
-                let borrowed = dict.borrow();
-                if let Some(val) = borrowed.get(&dict_key) {
+                if args.is_empty() || args.len() > 2 { return Err(self.error("R006", format!("get() takes, at most, 2arguments, got {}", args.len()))); }
+                if let Some(val) = dict.items.get(&args[0]) {
                     self.push(val.clone());
                 } else if args.len() == 2 {
                     self.push(args[1].clone());
                 } else {
-                    self.push(Value::None);
+                    self.push(Value::none());
                 }
-
                 Ok(MethodCache::EMPTY)
             }
 
             "pop" => {
-                if args.is_empty() || args.len() > 2 {
-                    let hint = if args.is_empty() { "add the key argument" } else { "remove extra arguments" };
-                    return Err(self.error("R006", format!("pop() takes at most 2 arguments, got {}", args.len())).with_help(hint));
-                }
-
-                let dict_key = match DictKey::from_value(&args[0]) {
-                    Ok(k) => k,
-                    Err(msg) => return Err(self.error("R002", msg)),
-                };
-
-                let mut borrowed = dict.borrow_mut();
-                if let Some(val) = borrowed.remove(&dict_key) {
+                if args.is_empty() || args.len() > 2 { return Err(self.error("R006", format!("pop() takes at most 2 arguments, got {}", args.len()))); }
+                if let Some(val) = dict.items.remove(&args[0]) {
                     self.push(val);
                 } else if args.len() == 2 {
                     self.push(args[1].clone());
                 } else {
-                    return Err(self.error("R008", format!("key '{}' not found in dictionary", dict_key.to_value()))
-                        .with_help("provide a default fallback value: pop(key, default)"));
+                    return Err(self.error("R008", format!("key '{}' not found in dictionary", args[0])));
                 }
-
                 Ok(MethodCache::EMPTY)
             }
 
             "keys" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "keys() takes no arguments").with_help("remove the arguments"));
-                }
-                
-                let borrowed = dict.borrow();
-                let keys_list: Vec<Value> = borrowed.keys()
-                    .map(|k| k.to_value())
-                    .collect();
-
-                self.push(Value::List(Rc::new(RefCell::new(keys_list))));
+                if !args.is_empty() { return Err(self.error("R006", "keys() takes no arguments")); }
+                let keys_list: Vec<Value> = dict.items.keys().cloned().collect();
+                let list_val = Value::allocate_list(&mut self.heap, keys_list);
+                self.push(list_val);
                 Ok(MethodCache::EMPTY)
             }
 
             "values" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "values() takes no arguments").with_help("remove the arguments"));
-                }
-
-                let borrowed = dict.borrow();
-                let values_list: Vec<Value> = borrowed.values()
-                    .cloned()
-                    .collect();
-
-                self.push(Value::List(Rc::new(RefCell::new(values_list))));
+                if !args.is_empty() { return Err(self.error("R006", "values() takes no arguments")); }
+                let values_list: Vec<Value> = dict.items.values().cloned().collect();
+                let list_val = Value::allocate_list(&mut self.heap, values_list);
+                self.push(list_val);
                 Ok(MethodCache::EMPTY)
             }
 
@@ -477,101 +335,83 @@ impl VM {
         }
     }
 
-    fn invoke_file_method(&mut self, file: SharedFile, method: &str, args: &[Value]) -> Result<MethodCache, VyprError> {
-        use std::io::{Read, Write, BufRead, BufReader};
-
-        let mut f = file.0.borrow_mut();
+    fn invoke_file_method(&mut self, file: &mut ObjectFile, method: &str, args: &[Value]) -> Result<MethodCache, VyprError> {
+        let mut f = file.file.borrow_mut();
 
         match method {
             "read" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "read() takes no arguments").with_help("remove the arguments"));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "read() takes no arguments")); }
                 let mut buf = String::new();
-                if let Err(e) = f.read_to_string(&mut buf) {
-                    return Err(self.error("R015", format!("failed to read file: {}", e)));
-                }
-
-                self.push(Value::make_string(&buf));
+                if let Err(e) = f.read_to_string(&mut buf) { return Err(self.error("R015", format!("failed to read file: {}", e))); }
+                
+                let string_val = Value::make_string(&mut self.heap, &buf);
+                self.push(string_val);
                 Ok(MethodCache::EMPTY)
             }
 
             "write" => {
-                if args.len() != 1 {
-                    return Err(self.error("R006", format!("write() takes exactly 1 argument, got {}", args.len())));
-                }
-
+                if args.len() != 1 { return Err(self.error("R006", format!("write() takes exactly 1 argument, got {}", args.len()))); }
                 let s = match args[0].as_str() {
                     Some(string) => string,
                     None => return Err(self.error("R002", "write() arguments must be a string")),
                 };
-
-                if let Err(e) = f.write_all(s.as_bytes()) {
-                    return Err(self.error("R015", format!("failed to write to file: {}", e)));
-                }
-
-                self.push(Value::None);
+                if let Err(e) = f.write_all(s.as_bytes()) { return Err(self.error("R015", format!("failed to write to file: {}", e))); }
+                
+                self.push(Value::none());
                 Ok(MethodCache::EMPTY)
             }
 
             "readlines" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "readlines() takes no arguments").with_help("remove the arguments"));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "readlines() takes no arguments")); }
                 let reader = BufReader::new(&mut *f);
                 let mut lines = Vec::new();
-
                 for line in reader.lines() {
                     match line {
                         Ok(mut line) => {
                             line.push('\n');
-                            lines.push(Value::make_string(&line));
+                            lines.push(Value::make_string(&mut self.heap, &line));
                         }
                         Err(e) => return Err(self.error("R015", format!("failed to read line: {}", e))),
                     }
                 }
-
-                self.push(Value::List(Rc::new(RefCell::new(lines))));
+                
+                let list_val = Value::allocate_list(&mut self.heap, lines);
+                self.push(list_val);
                 Ok(MethodCache::EMPTY)
             }
 
             "writelines" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "writelines() takes no arguments").with_help("remove the arguments"));
-                }
-
-                match &args[0] {
-                    Value::List(items) => {
-                        let borrowed = items.borrow();
-
-                        for item in borrowed.iter() {
-                            if let Some(s) = item.as_str() {
-                                if let Err(e) = f.write_all(s.as_bytes()) {
-                                    return Err(self.error("R015", format!("faield to write to file: {}", e)));
+                if !args.is_empty() { return Err(self.error("R006", "writelines() takes no arguments")); }
+                if args[0].is_object() {
+                    unsafe {
+                        let obj = args[0].as_object();
+                        if (*obj).ty == ObjectType::LIST {
+                            let list = &*(obj as *const ObjectList);
+                            for item in &list.items {
+                                if let Some(s) = item.as_str() {
+                                    if let Err(e) = f.write_all(s.as_bytes()) {
+                                        return Err(self.error("R015", format!("failed to write to file: {}", e)));
+                                    }
+                                } else {
+                                    return Err(self.error("R002", "writelines() requires a list of strings"));
                                 }
-                            } else {
-                                return Err(self.error("R002", "writelines() requires a list of strings"));
                             }
+                        } else {
+                            return Err(self.error("R002", "writelines() requires a list of strings"));
                         }
-                    },
-                    _ => return Err(self.error("R002", "writelines() requires a list of strings")),
+                    }
+                } else {
+                    return Err(self.error("R002", "writelines() requires a list of strings"));
                 }
-
-                self.push(Value::None);
+                self.push(Value::none());
                 Ok(MethodCache::EMPTY)
             }
 
             "close" => {
-                if !args.is_empty() {
-                    return Err(self.error("R006", "close() takes no arguments").with_help("remove the arguments"));
-                }
-
+                if !args.is_empty() { return Err(self.error("R006", "close() takes no arguments")); }
                 let _ = f.flush();
                 let _ = f.sync_all();
-
-                self.push(Value::None);
+                self.push(Value::none());
                 Ok(MethodCache::EMPTY)
             }
 

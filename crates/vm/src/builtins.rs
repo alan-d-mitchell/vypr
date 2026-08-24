@@ -1,13 +1,13 @@
 use error::error::{Span, VyprError};
-
-use crate::value::{SharedFile, Value};
+use crate::heap::Heap;
+use crate::value::{Value, ObjectType, ObjectList, ObjectRange};
 use std::{cell::RefCell, fs::OpenOptions, io::{self, Write}, rc::Rc};
 
 fn error(code: &'static str, message: impl Into<String>) -> VyprError {
     VyprError::new(code, message, Span::default())
 }
 
-pub fn vypr_print(args: &[Value], kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_print(_heap: &mut Heap, args: &[Value], kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     let mut stdout = io::stdout().lock();
 
     let sep = kwargs.iter()
@@ -23,7 +23,7 @@ pub fn vypr_print(args: &[Value], kwargs: &[(String, Value)]) -> Result<Value, V
     let flush = kwargs.iter()
         .find(|(k, _)| k == "flush")
         .and_then(|(_, v)| {
-            if let Value::Bool(b) = v { Some(*b) } else { None }
+            if v.is_bool() { Some(v.as_bool()) } else { None }
         })
         .unwrap_or(false);
 
@@ -42,79 +42,88 @@ pub fn vypr_print(args: &[Value], kwargs: &[(String, Value)]) -> Result<Value, V
         let _ = stdout.flush(); 
     }
 
-    Ok(Value::None)
+    Ok(Value::none())
 }
 
-pub fn vypr_int(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_int(_heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
-        return Ok(Value::Int(0));
+        return Ok(Value::int(0));
     }
 
     if let Some(s) = args[0].as_str() {
-        return match s.parse::<i64>() {
-            Ok(val) => Ok(Value::Int(val)),
+        return match s.parse::<i32>() {
+            Ok(val) => Ok(Value::int(val)),
             Err(_) => Err(error("R002", format!("invalid literal for int(): '{}'", s))),
         };
     }
 
-    match &args[0] {
-        Value::Int(i) => Ok(Value::Int(*i)),
-        Value::Float(f) => Ok(Value::Int(*f as i64)),
-        Value::Bool(b) => Ok(Value::Int(if *b { 1 } else { 0 })),
-        _ => Err(error("R002", format!("int() argument must be a string or a number, not '{}'", args[0].get_type()))),
-    }
+    if args[0].is_int() { return Ok(args[0].clone()); }
+    if args[0].is_float() { return Ok(Value::int(args[0].as_float() as i32)); }
+    if args[0].is_bool() { return Ok(Value::int(if args[0].as_bool() { 1 } else { 0 })); }
+    
+    Err(error("R002", format!("int() argument must be a string or a number, not '{}'", args[0].get_type())))
 }
 
-pub fn vypr_float(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_float(_heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() { 
-        return Ok(Value::Float(0.0)); 
+        return Ok(Value::float(0.0)); 
     }
 
     if let Some(s) = args[0].as_str() {
         return match s.parse::<f64>() {
-            Ok(val) => Ok(Value::Float(val)),
+            Ok(val) => Ok(Value::float(val)),
             Err(_) => Err(error("R002", format!("could not convert string to float: '{}'", s))),
         };
     }
 
-    match &args[0] {
-        Value::Float(f) => Ok(Value::Float(*f)),
-        Value::Int(i) => Ok(Value::Float(*i as f64)),
-        Value::Bool(b) => Ok(Value::Float(if *b { 1.0 } else { 0.0 })),
-        _ => Err(error("R002", format!("float() argument must be a string or a number, not '{}'", args[0].get_type()))),
-    }
+    if args[0].is_float() { return Ok(args[0].clone()); }
+    if args[0].is_int() { return Ok(Value::float(args[0].as_int() as f64)); }
+    if args[0].is_bool() { return Ok(Value::float(if args[0].as_bool() { 1.0 } else { 0.0 })); }
+    
+    Err(error("R002", format!("float() argument must be a string or a number, not '{}'", args[0].get_type())))
 }
 
-pub fn vypr_str(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_str(heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
-        return Ok(Value::make_string("")); 
+        return Ok(Value::make_string(heap, "")); 
     }
-
-    Ok(Value::make_string(&args[0].to_string()))
+    Ok(Value::make_string(heap, &args[0].to_string()))
 }
 
-pub fn vypr_len(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_len(_heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("len() takes exactly 1 argument, got {}", args.len())));
     }
 
     if let Some(s) = args[0].as_str() {
-        return Ok(Value::Int(s.chars().count() as i64));
+        return Ok(Value::int(s.chars().count() as i32));
     }
 
-    match &args[0] {
-        Value::List(items) => Ok(Value::Int(items.borrow().len() as i64)),
-        Value::Range(bounds) => {
-            let (start, stop) = **bounds;
-            let len = if stop > start { stop - start } else { 0 };
-            Ok(Value::Int(len))
-        },
-        Value::Dict(dict) => Ok(Value::Int(dict.borrow().len() as i64)),
-        _ => Err(error("R002", format!("object of type {} has no len()", args[0].get_type())))
+    if args[0].is_object() {
+        unsafe {
+            let obj = args[0].as_object();
+            match (*obj).ty {
+                ObjectType::LIST => {
+                    let list = &*(obj as *const ObjectList);
+                    return Ok(Value::int(list.items.len() as i32));
+                }
+                ObjectType::DICT => {
+                    return Ok(Value::int(0)); 
+                }
+                ObjectType::RANGE => {
+                    let r = &*(obj as *const ObjectRange);
+                    let len = if r.stop > r.start { r.stop - r.start } else { 0 };
+                    return Ok(Value::int(len));
+                }
+                _ => {}
+            }
+        }
     }
+    
+    Err(error("R002", format!("object of type {} has no len()", args[0].get_type())))
 }
 
-pub fn vypr_range(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_range(heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
         return Err(error("R014", "range expected at least 1 argument, got 0"));
     }
@@ -123,31 +132,31 @@ pub fn vypr_range(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, 
     let mut stop = 0;
 
     if args.len() == 1 {
-        if let Value::Int(s) = args[0] {
-            stop = s;
+        if args[0].is_int() {
+            stop = args[0].as_int();
         } else {
             return Err(error("R002", format!("'{}' object cannot be interpreted as an integer", args[0].get_type())));
         }
     } else if args.len() >= 2 {
-        if let Value::Int(s) = args[0] {
-            start = s;
+        if args[0].is_int() {
+            start = args[0].as_int();
         } else {
             return Err(error("R002", format!("'{}' object cannot be interpreted as an integer", args[0].get_type())));
         }
 
-        if let Value::Int(s) = args[1] {
-            stop = s;
+        if args[1].is_int() {
+            stop = args[1].as_int();
         } else {
             return Err(error("R002", format!("'{}' object cannot be interpreted as an integer", args[1].get_type())));
         }
     }
 
-    Ok(Value::Range(Box::new((start, stop))))
+    Ok(Value::allocate_range(heap, start, stop))
 }
 
-pub fn vypr_list(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_list(heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
-        return Ok(Value::List(Rc::new(RefCell::new(Vec::new()))));
+        return Ok(Value::allocate_list(heap, Vec::new()));
     }
 
     if args.len() > 1 {
@@ -157,27 +166,36 @@ pub fn vypr_list(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, V
     if let Some(s) = args[0].as_str() {
         let mut chars = Vec::new();
         for c in s.chars() {
-            chars.push(Value::make_string(&c.to_string()));
+            chars.push(Value::make_string(heap, &c.to_string()));
         }
-        return Ok(Value::List(Rc::new(RefCell::new(chars))));
+        return Ok(Value::allocate_list(heap, chars));
     }
 
-    match &args[0] {
-        Value::List(items) => Ok(Value::List(Rc::new(RefCell::new(items.borrow().clone())))),
-        Value::Range(bounds) => {
-            let (start, stop) = **bounds;
-            let mut items = Vec::new();
-            for i in start..stop {
-                items.push(Value::Int(i));
+    if args[0].is_object() {
+        unsafe {
+            let obj = args[0].as_object();
+            match (*obj).ty {
+                ObjectType::LIST => {
+                    let list = &*(obj as *const ObjectList);
+                    return Ok(Value::allocate_list(heap, list.items.clone()));
+                }
+                ObjectType::RANGE => {
+                    let r = &*(obj as *const ObjectRange);
+                    let mut items = Vec::new();
+                    for i in r.start..r.stop {
+                        items.push(Value::int(i));
+                    }
+                    return Ok(Value::allocate_list(heap, items));
+                }
+                _ => {}
             }
-
-            Ok(Value::List(Rc::new(RefCell::new(items))))
-        } 
-        _ => Err(error("R002", format!("'{}' object is not iterable", args[0].get_type()))), 
+        }
     }
+    
+    Err(error("R002", format!("'{}' object is not iterable", args[0].get_type())))
 }
 
-pub fn vypr_reversed(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_reversed(heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() != 1 {
         return Err(error("R014", format!("reversed() takes exactly 1 argument, got {}", args.len())));
     }
@@ -185,33 +203,40 @@ pub fn vypr_reversed(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Valu
     if let Some(s) = args[0].as_str() {
         let chars: Vec<Value> = s.chars()
             .rev()
-            .map(|c| Value::make_string(&c.to_string()))
+            .map(|c| Value::make_string(heap, &c.to_string()))
             .collect();
-        return Ok(Value::List(Rc::new(RefCell::new(chars))));
+        return Ok(Value::allocate_list(heap, chars));
     }
 
-    match &args[0] {
-        Value::List(items) => {
-            let mut reversed = items.borrow().clone();
-            reversed.reverse();
-            Ok(Value::List(Rc::new(RefCell::new(reversed))))
-        }
-        Value::Range(bounds) => {
-            let (start, stop) = **bounds;
-            let mut items = Vec::new();
-            let len = if stop > start { stop - start } else { 0 };
+    if args[0].is_object() {
+        unsafe {
+            let obj = args[0].as_object();
+            match (*obj).ty {
+                ObjectType::LIST => {
+                    let list = &*(obj as *const ObjectList);
+                    let mut reversed = list.items.clone();
+                    reversed.reverse();
+                    return Ok(Value::allocate_list(heap, reversed));
+                }
+                ObjectType::RANGE => {
+                    let r = &*(obj as *const ObjectRange);
+                    let mut items = Vec::new();
+                    let len = if r.stop > r.start { r.stop - r.start } else { 0 };
 
-            for i in (0..len).rev() {
-                items.push(Value::Int(start + i));
+                    for i in (0..len).rev() {
+                        items.push(Value::int(r.start + i));
+                    }
+                    return Ok(Value::allocate_list(heap, items));
+                }
+                _ => {}
             }
-
-            Ok(Value::List(Rc::new(RefCell::new(items))))
         }
-        _ => Err(error("R002", format!("'{}' object is not reversible", args[0].get_type())))
     }
+    
+    Err(error("R002", format!("'{}' object is not reversible", args[0].get_type())))
 }
 
-pub fn vypr_input(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_input(heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.len() > 1 {
         return Err(error("R014", format!("input() takes at most 1 argument, got {}", args.len())));
     }
@@ -227,13 +252,13 @@ pub fn vypr_input(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, 
     match io::stdin().read_line(&mut buffer) {
         Ok(_) => {
             let sanitized = buffer.trim_end().to_string();
-            Ok(Value::Str(Rc::new(sanitized)))
+            Ok(Value::make_string(heap, &sanitized))
         }
         Err(e) => Err(error("R015", format!("failed to read input: {}", e)))
     }
 }
 
-pub fn vypr_open(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
+pub fn vypr_open(heap: &mut Heap, args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, VyprError> {
     if args.is_empty() {
         return Err(error("R014", format!("open() takes 1 or 2 arguments, got {}", args.len())));
     }
@@ -249,7 +274,7 @@ pub fn vypr_open(args: &[Value], _kwargs: &[(String, Value)]) -> Result<Value, V
     };
 
     match file_result {
-        Ok(file) => Ok(Value::File(SharedFile(Rc::new(RefCell::new(file))))),
+        Ok(file) => Ok(Value::allocate_file(heap, Rc::new(RefCell::new(file)))),
         Err(e) => Err(error("R015", format!("failed to open file: {}", e))),
     }
 }

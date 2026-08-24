@@ -8,6 +8,7 @@ use semantic::analyzer::Analyzer;
 use vir::builder::VIRBuilder;
 use vm::{compiler::Compiler, serializer::Serializer};
 use vm::vm::VM;
+use vm::heap::Heap;
 
 const YELLOW: &str = "\x1b[33m";
 const RED: &str = "\x1b[31m";
@@ -195,9 +196,11 @@ fn main() {
         println!("{}[INFO]{} dbg mir written to: {}", GREEN, RESET, fname);
     }
 
+    let mut heap = Heap::new();
+
     if emit_chunk_dbg {
         let compiler = Compiler::new();
-        match compiler.compile_program(&mir_program) {
+        match compiler.compile_program(&mut heap, &mir_program) {
             Ok(chunk) => {
                 let script_name = input_path.file_stem()
                     .unwrap_or(std::ffi::OsStr::new("script"))
@@ -227,7 +230,7 @@ fn main() {
 
     // --- PHASE 6: COMPILATION ---
     let compiler = Compiler::new();
-    match compiler.compile_program(&mir_program) {
+    match compiler.compile_program(&mut heap, &mir_program) {
         Ok(chunk) => {
             let script_name = input_path.file_stem()
                 .unwrap_or(std::ffi::OsStr::new("script"))
@@ -259,7 +262,7 @@ fn main() {
             }
 
             // --- PHASE 7: EXECUTION ---
-            let mut vm = VM::new(chunk);
+            let mut vm = VM::new(heap, chunk);
             if let Err(e) = vm.run() {
                 e.report(&contents, &input);
                 process::exit(1);
